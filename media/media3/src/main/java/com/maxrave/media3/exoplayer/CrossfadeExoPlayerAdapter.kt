@@ -305,6 +305,7 @@ internal class CrossfadeExoPlayerAdapter(
     private data class PrecachedPlayer(
         val player: ExoPlayer,
         val mediaItem: GenericMediaItem,
+        val evictionListener: Player.Listener? = null,
     )
 
     // VideoId -> PrecachedPlayer
@@ -1560,19 +1561,11 @@ internal class CrossfadeExoPlayerAdapter(
                         )
                     }
 
-                    // Use precached player if available — unless it already failed. A precache that
-                    // ran into a live broadcast holds nothing playable (its progressive source threw
-                    // LiveStreamDetectedException while nobody was listening), so it is dropped and
-                    // the track is built afresh, which now gives it an HLS source.
-                    val cachedPlayerEntry =
-                        precachedPlayers.remove(videoId)?.let { cached ->
-                            if (cached.player.playerError == null) {
-                                cached
-                            } else {
-                                cached.player.release()
-                                null
-                            }
-                        }
+                    // Use precached player if available and healthy. One that already failed is
+                    // dropped and the track is built afresh: this also covers a live broadcast, whose
+                    // progressive source threw LiveStreamDetectedException while nobody was listening,
+                    // so the fresh player now gets an HLS source.
+                    val cachedPlayerEntry = takeHealthyPrecachedPlayer(videoId)
                     val player: ExoPlayer
                     if (cachedPlayerEntry?.player != null) {
                         Logger.d(TAG, "Using precached player for $videoId")
@@ -2081,7 +2074,7 @@ internal class CrossfadeExoPlayerAdapter(
                 Logger.d(TAG, "Starting crossfade to track $nextIndex")
 
                 // Get or create secondary player
-                val cachedPlayerEntry = precachedPlayers.remove(nextVideoId)
+                val cachedPlayerEntry = takeHealthyPrecachedPlayer(nextVideoId)
                 val nextPlayer: ExoPlayer
                 if (cachedPlayerEntry?.player != null) {
                     nextPlayer = cachedPlayerEntry.player
@@ -2428,8 +2421,22 @@ internal class CrossfadeExoPlayerAdapter(
                         try {
                             val player = createExoPlayerInstance()
                             player.setMediaItem(mediaItem.toMedia3MediaItem())
+                            // A precache player that fails (e.g. stream URL resolution
+                            // during a network loss) must leave the map, both so it is
+                            // never swapped in at a transition and so the track can be
+                            // precached again once connectivity returns (#2239).
+                            val evictionListener =
+                                object : Player.Listener {
+                                    override fun onPlayerError(error: PlaybackException) {
+                                        if (precachedPlayers[mediaItem.mediaId]?.player !== player) return
+                                        precachedPlayers.remove(mediaItem.mediaId)
+                                        Logger.w(TAG, "Evicting failed precached player for ${mediaItem.mediaId}: ${error.errorCodeName}")
+                                        coroutineScope.launch { cleanupPlayerInternal(player) }
+                                    }
+                                }
+                            player.addListener(evictionListener)
                             player.prepare()
-                            precachedPlayers[mediaItem.mediaId] = PrecachedPlayer(player, mediaItem)
+                            precachedPlayers[mediaItem.mediaId] = PrecachedPlayer(player, mediaItem, evictionListener)
                             Logger.d(TAG, "Precached player for index $idx")
                         } catch (e: Exception) {
                             Logger.e(TAG, "Precaching error for $idx: ${e.message}")
@@ -2448,6 +2455,24 @@ internal class CrossfadeExoPlayerAdapter(
     private fun cancelPrecaching() {
         precacheJob?.cancel()
         precacheJob = null
+    }
+
+    /**
+     * Remove and return the precached player for [videoId], or null if there is none
+     * or its preparation already failed. A failed player sits in STATE_IDLE with
+     * [ExoPlayer.getPlayerError] set; swapping it in would only surface that stale
+     * error and stop playback, so it is released here instead (#2239).
+     */
+    private fun takeHealthyPrecachedPlayer(videoId: String): PrecachedPlayer? {
+        val cached = precachedPlayers.remove(videoId) ?: return null
+        cached.evictionListener?.let { cached.player.removeListener(it) }
+        val error = cached.player.playerError
+        if (error != null) {
+            Logger.w(TAG, "Discarding failed precached player for $videoId: ${error.errorCodeName}")
+            cleanupPlayerInternal(cached.player)
+            return null
+        }
+        return cached
     }
 
     private fun clearPrecacheExceptCurrentInternal() {
