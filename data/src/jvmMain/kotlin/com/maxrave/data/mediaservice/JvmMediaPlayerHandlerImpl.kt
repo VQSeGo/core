@@ -740,6 +740,9 @@ class JvmMediaPlayerHandlerImpl(
         }
         _format.value = null
         _skipSegments.value = null
+        // Cancelled here, not further down: the writes below touch the song table, which makes the
+        // previous track's subscription emit its own row over the track that just started.
+        songEntityJob?.cancel()
         getDataOfNowPlayingTrackStateJob?.cancel()
         getDataOfNowPlayingTrackStateJob =
             coroutineScope.launch {
@@ -806,6 +809,38 @@ class JvmMediaPlayerHandlerImpl(
                             songEntity = song,
                         )
                     }
+                    // Started before anything below that can suspend: setNowPlaying fetches the
+                    // artwork, and a skip during it cancels this job, which used to leave the new
+                    // track without a subscription and the old one still writing.
+                    songEntityJob?.cancel()
+                    songEntityJob =
+                        coroutineScope.launch {
+                            songRepository.getSongAsFlow(videoId).cancellable().filterNotNull().collectLatest { songEntity ->
+                                // A subscription that outlived its track must not touch the new one.
+                                if (nowPlayingState.value.mediaItem.mediaId != mediaItem.mediaId) return@collectLatest
+                                if (dataStoreManager.explicitContentEnabled.first() == FALSE && songEntity.isExplicit) {
+                                    showToast(ToastType.ExplicitContent)
+                                    if (player.hasNextMediaItem()) {
+                                        player.seekToNext()
+                                    } else if (player.hasPreviousMediaItem()) {
+                                        player.seekToPrevious()
+                                    } else {
+                                        player.stop()
+                                    }
+                                    return@collectLatest
+                                }
+                                _nowPlayingState.update {
+                                    it.copy(
+                                        songEntity = songEntity,
+                                    )
+                                }
+                                _controlState.update {
+                                    it.copy(
+                                        isLiked = songEntity.liked,
+                                    )
+                                }
+                            }
+                        }
                     updateDiscordRpc(song)
                     // Launched separately: "now playing" is a network round trip, and this job
                     // still has the rest of the track state to publish.
@@ -818,33 +853,6 @@ class JvmMediaPlayerHandlerImpl(
                     )
                     updateMacOSNowPlayingInfo(song)
                 }
-                songEntityJob?.cancel()
-                songEntityJob =
-                    coroutineScope.launch {
-                        songRepository.getSongAsFlow(videoId).cancellable().filterNotNull().collectLatest { songEntity ->
-                            if (dataStoreManager.explicitContentEnabled.first() == FALSE && songEntity.isExplicit) {
-                                showToast(ToastType.ExplicitContent)
-                                if (player.hasNextMediaItem()) {
-                                    player.seekToNext()
-                                } else if (player.hasPreviousMediaItem()) {
-                                    player.seekToPrevious()
-                                } else {
-                                    player.stop()
-                                }
-                                return@collectLatest
-                            }
-                            _nowPlayingState.update {
-                                it.copy(
-                                    songEntity = songEntity,
-                                )
-                            }
-                            _controlState.update {
-                                it.copy(
-                                    isLiked = songEntity.liked,
-                                )
-                            }
-                        }
-                    }
                 if (dataStoreManager.sponsorBlockEnabled.first() == TRUE) {
                     getSkipSegments(videoId)
                 }
