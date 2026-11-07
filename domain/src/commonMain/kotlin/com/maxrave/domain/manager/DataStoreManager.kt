@@ -369,10 +369,6 @@ interface DataStoreManager {
 
     suspend fun setKeepYouTubePlaylistOffline(keep: Boolean)
 
-    val combineLocalAndYouTubeLiked: Flow<String>
-
-    suspend fun setCombineLocalAndYouTubeLiked(combine: Boolean)
-
     val shouldShowLogInRequiredAlert: Flow<String>
 
     suspend fun setShouldShowLogInRequiredAlert(shouldShow: Boolean)

@@ -266,6 +266,8 @@ internal class LocalDataSource(
         videoId: String,
     ) = databaseDao.updateLiked(liked, videoId)
 
+    suspend fun replaceLikedSongs(songs: List<SongEntity>) = databaseDao.replaceLikedSongs(songs)
+
     suspend fun updateDurationSeconds(
         durationSeconds: Int,
         videoId: String,

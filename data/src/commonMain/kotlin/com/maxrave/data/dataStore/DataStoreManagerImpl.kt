@@ -1187,25 +1187,6 @@ internal class DataStoreManagerImpl(
         }
     }
 
-    override val combineLocalAndYouTubeLiked: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[COMBINE_LOCAL_AND_YOUTUBE_LIKED] ?: FALSE
-        }
-
-    override suspend fun setCombineLocalAndYouTubeLiked(combine: Boolean) {
-        withContext(Dispatchers.IO) {
-            if (combine) {
-                settingsDataStore.edit { settings ->
-                    settings[COMBINE_LOCAL_AND_YOUTUBE_LIKED] = TRUE
-                }
-            } else {
-                settingsDataStore.edit { settings ->
-                    settings[COMBINE_LOCAL_AND_YOUTUBE_LIKED] = FALSE
-                }
-            }
-        }
-    }
-
     override val shouldShowLogInRequiredAlert =
         settingsDataStore.data.map { preferences ->
             preferences[SHOULD_SHOW_LOG_IN_REQUIRED_ALERT] ?: TRUE
@@ -1940,7 +1921,6 @@ internal class DataStoreManagerImpl(
         val PROXY_PASSWORD = stringPreferencesKey("proxy_password")
         val ENDLESS_QUEUE = stringPreferencesKey("endless_queue")
         val KEEP_YOUTUBE_PLAYLIST_OFFLINE = stringPreferencesKey("keep_youtube_playlist_offline")
-        val COMBINE_LOCAL_AND_YOUTUBE_LIKED = stringPreferencesKey("combine_local_and_youtube_liked")
         val SHOULD_SHOW_LOG_IN_REQUIRED_ALERT = stringPreferencesKey("should_show_log_in_required_alert")
         val AUTO_CHECK_FOR_UPDATES = stringPreferencesKey("auto_check_for_updates")
         val UPDATE_CHANNEL = stringPreferencesKey("update_channel")

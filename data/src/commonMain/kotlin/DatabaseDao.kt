@@ -46,6 +46,10 @@ import com.maxrave.domain.extension.now
 import com.maxrave.domain.utils.LIVE_RESULT_TYPE
 import kotlinx.coroutines.flow.Flow
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The album name older builds stored when they could not find a real one.
@@ -269,6 +273,27 @@ interface DatabaseDao {
         videoId: String,
         favoriteAt: LocalDateTime? = if (liked == 1) now() else null,
     )
+
+    @Query("UPDATE song SET liked = 0, favoriteAt = NULL WHERE liked = 1")
+    suspend fun clearLiked()
+
+    /**
+     * Makes [songs], newest like first, the whole set of liked songs. One transaction, so observers
+     * of the liked songs never see the list empty in between.
+     *
+     * YouTube does not say when a song was liked, so favoriteAt only has to keep its order: a second
+     * apart, counting back from now.
+     */
+    @Transaction
+    suspend fun replaceLikedSongs(songs: List<SongEntity>) {
+        insertSongs(songs)
+        clearLiked()
+        val newest = Clock.System.now()
+        val zone = TimeZone.currentSystemDefault()
+        songs.forEachIndexed { index, song ->
+            updateLiked(1, song.videoId, (newest - index.seconds).toLocalDateTime(zone))
+        }
+    }
 
     @Insert(onConflict = OnConflictStrategy.Companion.IGNORE)
     suspend fun insertSong(song: SongEntity): Long

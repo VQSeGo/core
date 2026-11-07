@@ -1,9 +1,11 @@
 package com.maxrave.data.repository
 
+import com.maxrave.common.Config
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.data.db.datasource.LocalDataSource
 import com.maxrave.data.extension.getFullDataFromDB
 import com.maxrave.data.mapping.toListTrack
+import com.maxrave.data.mapping.toTrack
 import com.maxrave.data.mapping.toYouTubeComment
 import com.maxrave.data.mapping.toYouTubeCommentsPage
 import com.maxrave.data.mapping.toSongItemForDownload
@@ -24,11 +26,13 @@ import com.maxrave.domain.manager.DataStoreManager.Values.TRUE
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
 import com.maxrave.domain.repository.SongRepository
+import com.maxrave.domain.utils.LikeFailure
 import com.maxrave.domain.utils.MusicVideoType
 import com.maxrave.domain.utils.Resource
 import com.maxrave.domain.utils.YouTubeLikeStatus
 import com.maxrave.domain.utils.isLive
 import com.maxrave.domain.utils.isRadioQueueId
+import com.maxrave.domain.utils.toSongEntity
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.kotlinytmusicscraper.models.SongItem
 import com.maxrave.kotlinytmusicscraper.models.WatchEndpoint
@@ -39,13 +43,21 @@ import com.maxrave.logger.Logger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDateTime
@@ -53,6 +65,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
 import kotlinx.datetime.toInstant
 import org.koin.mp.KoinPlatform.getKoin
+import kotlin.concurrent.Volatile
 import kotlin.math.pow
 
 private const val TAG = "SongRepositoryImpl"
@@ -329,7 +342,25 @@ internal class SongRepositoryImpl(
      */
     private val mediaPlayerHandler: MediaPlayerHandler by lazy { getKoin().get() }
 
+    private val _likeFailures =
+        MutableSharedFlow<LikeFailure>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val likeFailures: SharedFlow<LikeFailure> = _likeFailures.asSharedFlow()
+
+    // One like at a time, so two quick taps reach YouTube in the order they were made.
+    private val likeMutex = Mutex()
+    private val likedSyncMutex = Mutex()
+
+    // Moves on every like, so an answer from YouTube that was requested before it can tell it is
+    // out of date and must not overwrite the tap.
+    @Volatile
+    private var likeWrites = 0
+
     /**
+     * The like lives on YouTube; `song.liked` is the local copy of it that the heart, the offline
+     * list and the artist page read. It is written first so the heart answers the tap at once, and
+     * put back if YouTube refuses. NonCancellable because the player handlers cancel the previous
+     * toggle: stopped between the two steps, the copy would disagree with the account.
+     *
      * Note the side effect: liking a song can start a download, when the user has asked for that.
      *
      * Deliberately one-way. It fires only on the way *in* (`likeStatus == 1`) and only for songs
@@ -339,26 +370,62 @@ internal class SongRepositoryImpl(
     override suspend fun updateLikeStatus(
         videoId: String,
         likeStatus: Int,
-    ) = withContext(Dispatchers.Main) {
-        localDataSource.updateLiked(likeStatus, videoId)
-        if (likeStatus == 1 && dataStoreManager.autoDownloadLikedSongs.first() == TRUE) {
-            val song = localDataSource.getSong(videoId)
-            if (song != null && song.downloadState != DownloadState.STATE_DOWNLOADED) {
-                Logger.d(TAG, "Auto-downloading liked song: $videoId")
-                downloadHandler.downloadTrack(videoId, song.title, song.thumbnails.orEmpty())
+    ) = withContext(Dispatchers.Main + NonCancellable) {
+        likeMutex.withLock {
+            if (dataStoreManager.loggedIn.first() != TRUE) {
+                _likeFailures.tryEmit(LikeFailure.NOT_SIGNED_IN)
+                return@withLock
+            }
+            val wasLiked = localDataSource.getSong(videoId)?.liked == true
+            likeWrites++
+            localDataSource.updateLiked(likeStatus, videoId)
+            val response =
+                if (likeStatus == 1) {
+                    addToYouTubeLiked(videoId).firstOrNull()
+                } else {
+                    removeFromYouTubeLiked(videoId).firstOrNull()
+                }
+            if (response != 200) {
+                Logger.w(TAG, "updateLikeStatus: YouTube answered $response for $videoId")
+                localDataSource.updateLiked(if (wasLiked) 1 else 0, videoId)
+                _likeFailures.tryEmit(LikeFailure.REQUEST_FAILED)
+                return@withLock
+            }
+            if (likeStatus == 1 && dataStoreManager.autoDownloadLikedSongs.first() == TRUE) {
+                val song = localDataSource.getSong(videoId)
+                if (song != null && song.downloadState != DownloadState.STATE_DOWNLOADED) {
+                    Logger.d(TAG, "Auto-downloading liked song: $videoId")
+                    downloadHandler.downloadTrack(videoId, song.title, song.thumbnails.orEmpty())
+                }
             }
         }
-//        if (dataStoreManager.combineLocalAndYouTubeLiked.first() == TRUE) {
-//            if (likeStatus == 1) {
-//                addToYouTubeLiked(videoId).collect { result ->
-//                    Logger.d(TAG, "updateLikeStatus -> addToYouTubeLiked: $result")
-//                }
-//            } else {
-//                removeFromYouTubeLiked(videoId).collect { result ->
-//                    Logger.d(TAG, "updateLikeStatus -> removeFromYouTubeLiked: $result")
-//                }
-//            }
-//        }
+    }
+
+    override suspend fun syncLikedSongs() {
+        if (dataStoreManager.loggedIn.first() != TRUE || !likedSyncMutex.tryLock()) return
+        try {
+            withContext(Dispatchers.IO) {
+                val writes = likeWrites
+                youTube
+                    .getLikedMusic()
+                    .onSuccess { tracks ->
+                        // Empty is more likely a page the parser could not read than an account
+                        // with no likes, and a like made while this ran is not in the list.
+                        if (tracks.isEmpty() || writes != likeWrites) return@onSuccess
+                        localDataSource.replaceLikedSongs(
+                            tracks.map { song ->
+                                // Kept out of the library's recently added: nothing was added here.
+                                song.toTrack().toSongEntity().copy(inLibrary = Config.REMOVED_SONG_DATE_TIME)
+                            },
+                        )
+                        Logger.d(TAG, "syncLikedSongs: ${tracks.size} liked songs")
+                    }.onFailure {
+                        Logger.w(TAG, "syncLikedSongs: ${it.message}")
+                    }
+            }
+        } finally {
+            likedSyncMutex.unlock()
+        }
     }
 
     override fun updateSongInLibrary(
@@ -554,10 +621,16 @@ internal class SongRepositoryImpl(
 
     override suspend fun getLikeStatus(videoId: String): Flow<YouTubeLikeStatus> =
         flow {
+            val writes = likeWrites
             runCatching {
                 youTube
                     .getLikedInfo(videoId)
                     .onSuccess {
+                        val liked = it == LikeStatus.LIKE
+                        val song = localDataSource.getSong(videoId)
+                        if (writes == likeWrites && song != null && song.liked != liked) {
+                            localDataSource.updateLiked(if (liked) 1 else 0, videoId)
+                        }
                         emit(
                             when (it) {
                                 LikeStatus.LIKE -> YouTubeLikeStatus.LIKE

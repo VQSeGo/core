@@ -8,9 +8,11 @@ import com.maxrave.domain.data.model.comments.YouTubeComment
 import com.maxrave.domain.data.model.comments.YouTubeCommentsPage
 import com.maxrave.domain.data.model.download.DownloadProgress
 import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint
+import com.maxrave.domain.utils.LikeFailure
 import com.maxrave.domain.utils.Resource
 import com.maxrave.domain.utils.YouTubeLikeStatus
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.datetime.LocalDateTime
 
 interface SongRepository {
@@ -97,10 +99,17 @@ interface SongRepository {
 
     suspend fun resetTotalPlayTime(videoId: String)
 
+    /** Likes that did not reach the account, whichever button asked for them. */
+    val likeFailures: SharedFlow<LikeFailure>
+
+    /** Likes or unlikes on YouTube; `song.liked` is a local copy of that, see [syncLikedSongs]. */
     suspend fun updateLikeStatus(
         videoId: String,
         likeStatus: Int,
     )
+
+    /** Replaces the local copy of the likes with the account's Liked Music. */
+    suspend fun syncLikedSongs()
 
     fun updateSongInLibrary(
         inLibrary: LocalDateTime,

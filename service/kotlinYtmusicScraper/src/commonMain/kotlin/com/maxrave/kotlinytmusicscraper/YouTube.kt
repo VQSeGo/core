@@ -92,6 +92,8 @@ import com.maxrave.kotlinytmusicscraper.parser.getPlaylistContinuation
 import com.maxrave.kotlinytmusicscraper.parser.getReloadParams
 import com.maxrave.kotlinytmusicscraper.parser.getSuggestionSongItems
 import com.maxrave.kotlinytmusicscraper.parser.hasReloadParams
+import com.maxrave.kotlinytmusicscraper.parser.playlistContinuationContents
+import com.maxrave.kotlinytmusicscraper.parser.toSongItem
 import com.maxrave.logger.Logger
 import com.mohamedrejeb.ksoup.html.parser.KsoupHtmlHandler
 import com.mohamedrejeb.ksoup.html.parser.KsoupHtmlParser
@@ -698,6 +700,36 @@ class YouTube {
             return@runCatching listPair
         }
 
+    /**
+     * Every track of the account's Liked Music, newest like first.
+     *
+     * Not [getYouTubePlaylistFullTracksWithSetVideoId], which keeps only rows with a setVideoId (the
+     * id for removing a row from a playlist, which Liked Music has no use for) and stops quietly at
+     * a page it cannot read. The caller takes a track missing from here as unliked, so a page that
+     * fails has to fail the whole result.
+     */
+    suspend fun getLikedMusic(): Result<List<SongItem>> =
+        runCatching {
+            val response = ytMusic.playlist("VLLM").body<BrowseResponse>()
+            val songs = response.fromPlaylistToTrack().toMutableList()
+            var continuation = response.getPlaylistContinuation()
+            // A token seen twice would loop forever.
+            val seenContinuations = mutableSetOf<String>()
+            while (continuation != null && seenContinuations.add(continuation)) {
+                val page =
+                    ytMusic
+                        .browse(
+                            client = WEB_REMIX,
+                            setLogin = true,
+                            params = null,
+                            continuation = continuation,
+                        ).body<BrowseResponse>()
+                songs.addAll(page.playlistContinuationContents().orEmpty().mapNotNull { it.toSongItem() })
+                continuation = page.getPlaylistContinuation()
+            }
+            songs
+        }
+
     suspend fun getSuggestionsTrackForPlaylist(playlistId: String): Result<Pair<String?, List<SongItem>?>?> =
         runCatching {
             val initialResponse =
@@ -1184,7 +1216,9 @@ class YouTube {
                     ?.likeStatus
                     ?.toLikeStatus()
             Logger.d("YouTube", "Like status: $likeStatus")
-            return@runCatching likeStatus ?: LikeStatus.INDIFFERENT
+            // No button is an unreadable answer, not an unrated track: callers write this to the
+            // local copy of the likes, and reading it as INDIFFERENT would unlike the song there.
+            return@runCatching checkNotNull(likeStatus) { "No like button for $videoId" }
         }
 
     suspend fun getSongInfo(videoId: String): Result<SongInfo> =

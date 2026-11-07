@@ -9,3 +9,9 @@ enum class YouTubeLikeStatus {
     DISLIKE,
     INDIFFERENT,
 }
+
+/** Why a like did not reach the account. The song's local state has been put back by then. */
+enum class LikeFailure {
+    NOT_SIGNED_IN,
+    REQUEST_FAILED,
+}
