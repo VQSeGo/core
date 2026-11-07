@@ -261,22 +261,23 @@ class Ytmusic {
 
     @OptIn(ExperimentalTime::class)
     /**
-     * What a browser sends: one hash of `<unix seconds> <cookie value> <origin>` per API cookie it holds,
-     * each under its own scheme. A cookie copied from DevTools often has only the 3P one (no SAPISID),
-     * and without any hash YouTube answers as a guest, whatever else the cookie carries.
+     * One hash of `<unix seconds> <cookie value> <origin>` per API cookie held, each under its own scheme.
+     * SAPISIDHASH takes the first of SAPISID, 1P or 3P: a cookie copied from DevTools often has only the
+     * 3P one, and YouTube accepts nothing but a SAPISIDHASH for it (SAPISID3PHASH alone is read as a guest,
+     * whatever else the cookie carries). The unix time is in seconds.
      */
     internal fun getAuthorizationHeader(): String? {
         if (cookie.isNullOrEmpty()) return null
         val currentTime = now().toInstant(TimeZone.currentSystemDefault()).epochSeconds
         val schemes =
             listOf(
-                "SAPISIDHASH" to "SAPISID",
-                "SAPISID1PHASH" to "__Secure-1PAPISID",
-                "SAPISID3PHASH" to "__Secure-3PAPISID",
+                "SAPISIDHASH" to (cookieMap["SAPISID"] ?: cookieMap["__Secure-1PAPISID"] ?: cookieMap["__Secure-3PAPISID"]),
+                "SAPISID1PHASH" to cookieMap["__Secure-1PAPISID"],
+                "SAPISID3PHASH" to cookieMap["__Secure-3PAPISID"],
             )
         val hashes =
-            schemes.mapNotNull { (scheme, cookieName) ->
-                val value = cookieMap[cookieName] ?: return@mapNotNull null
+            schemes.mapNotNull { (scheme, value) ->
+                value ?: return@mapNotNull null
                 "$scheme ${currentTime}_${sha1("$currentTime $value https://music.youtube.com")}"
             }
         return hashes.takeIf { it.isNotEmpty() }?.joinToString(" ")

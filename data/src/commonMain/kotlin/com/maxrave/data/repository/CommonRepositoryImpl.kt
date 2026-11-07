@@ -22,9 +22,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okio.IOException
@@ -51,6 +53,14 @@ internal class CommonRepositoryImpl(
         isDevBuild: Boolean,
     ) {
         youTube.cookiePath = cookiePath.toPath()
+        // The stored session goes onto the client before anything can ask it for a page. The jobs below
+        // apply it again a moment later, and Home had already fetched by then: a signed-in user got the
+        // guest Home and nothing refreshed it once the cookie arrived.
+        runBlocking {
+            dataStoreManager.cookie.first().takeIf { it.isNotEmpty() }?.let { youTube.cookie = it }
+            youTube.pageId = dataStoreManager.pageId.first().ifEmpty { null }
+            youTube.authUser = dataStoreManager.authUser.first()
+        }
         coroutineScope.launch {
             val resetSpotifyToken =
                 launch {
@@ -163,8 +173,10 @@ internal class CommonRepositoryImpl(
                 }
             val visitorDataJob =
                 launch {
-                    dataStoreManager.visitorData.collectLatest { visitorData ->
-                        youTube.visitorData = visitorData
+                    // The stored value is empty unless a login wrote one. Every DataStore write re-emits it, so
+                    // applying it blank wiped the visitor id the cookie job had just fetched.
+                    dataStoreManager.visitorData.distinctUntilChanged().collectLatest { visitorData ->
+                        if (visitorData.isNotBlank()) youTube.visitorData = visitorData
                     }
                 }
             // Observe job: push cached TIDAL credentials from DataStore into YouTube.
