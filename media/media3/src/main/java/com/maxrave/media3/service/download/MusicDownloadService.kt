@@ -60,6 +60,7 @@ internal class MusicDownloadService :
         private var nextNotificationId: Int,
         private val scope: CoroutineScope,
         private val isSmartDownload: suspend (videoId: String) -> Boolean,
+        private val notificationsEnabled: suspend () -> Boolean,
     ) : DownloadManager.Listener {
         override fun onDownloadChanged(
             downloadManager: DownloadManager,
@@ -68,6 +69,7 @@ internal class MusicDownloadService :
         ) {
             if (download.state != Download.STATE_FAILED && download.state != Download.STATE_COMPLETED) return
             scope.launch {
+                if (!notificationsEnabled()) return@launch
                 // Smart downloads fetch dozens of songs on their own, and a notification for each would
                 // flood the shade. The service's progress notification still shows while they run.
                 val isSmart =

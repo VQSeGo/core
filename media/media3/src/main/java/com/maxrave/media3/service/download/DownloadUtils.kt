@@ -25,6 +25,7 @@ import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
+import com.maxrave.domain.mediaservice.handler.downloadNotificationsEnabled
 import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.domain.utils.isLive
@@ -194,6 +195,7 @@ internal class DownloadUtils(
                     isSmartDownload = { videoId ->
                         songRepository.getSongById(videoId).lastOrNull()?.category == SongEntity.SMART_DOWNLOAD
                     },
+                    notificationsEnabled = { dataStoreManager.downloadNotificationsEnabled.first() },
                 ),
             )
         }

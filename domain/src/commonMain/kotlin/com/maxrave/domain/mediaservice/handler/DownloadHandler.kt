@@ -1,6 +1,19 @@
 package com.maxrave.domain.mediaservice.handler
 
+import com.maxrave.domain.manager.DataStoreManager
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+
+private const val DOWNLOAD_NOTIFICATIONS_KEY = "download_notifications"
+
+/** Whether finished and failed downloads are announced. Android's progress notification stays either way. */
+val DataStoreManager.downloadNotificationsEnabled: Flow<Boolean>
+    get() = getString(DOWNLOAD_NOTIFICATIONS_KEY).map { it != "false" }
+
+suspend fun DataStoreManager.setDownloadNotificationsEnabled(enabled: Boolean) {
+    putString(DOWNLOAD_NOTIFICATIONS_KEY, enabled.toString())
+}
 
 interface DownloadHandler {
     suspend fun downloadTrack(
