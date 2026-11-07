@@ -2,23 +2,34 @@ package com.simpmusic.media_jvm.download
 
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.entities.DownloadState
+import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
+import com.maxrave.domain.mediaservice.handler.downloadNotificationsEnabled
 import com.maxrave.domain.notification.DesktopNotificationManager
 import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.domain.utils.isLive
 import com.maxrave.domain.utils.toTrack
 import com.maxrave.logger.Logger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.lastOrNull
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "DownloadUtils"
 
@@ -29,6 +40,11 @@ private const val DOWNLOAD_FINISHED_TITLE = "Download complete"
 private const val DOWNLOAD_FAILED_TITLE = "Download failed"
 private const val ACTIVE_DOWNLOAD_NOTIFICATION_ID = "downloads.active"
 private const val DOWNLOAD_RESULT_NOTIFICATION_ID = "downloads.result"
+
+// Enough that one slow track does not hold up the rest, few enough not to compete with the player.
+private const val PARALLEL_DOWNLOADS = 3
+private const val DOWNLOAD_ATTEMPTS = 2
+private const val RETRY_DELAY_MS = 2_000L
 
 internal class DownloadUtils(
     private val dataStoreManager: DataStoreManager,
@@ -69,61 +85,113 @@ internal class DownloadUtils(
 
     val downloadingVideoIds = MutableStateFlow<MutableSet<String>>(mutableSetOf())
 
+    private val notificationsEnabled =
+        dataStoreManager.downloadNotificationsEnabled.stateIn(coroutineScope, SharingStarted.Eagerly, true)
+
+    // The queue belongs to this class, not to whoever asked. The screens ask from their own scope, and
+    // a transfer running there died with the screen: the row stayed on "downloading" for good, and
+    // every track behind it in the caller's loop never started.
+    private val queue = Channel<SongEntity>(Channel.UNLIMITED)
+
+    /** Everything queued or running. An id leaves it once, and whoever takes it out finishes it up. */
+    private val pendingIds = ConcurrentHashMap.newKeySet<String>()
+    private val transfers = ConcurrentHashMap<String, Job>()
+
+    /** A row still marked as downloading has no transfer behind it at launch: the last one died with the app. */
+    private suspend fun resumeInterruptedDownloads() {
+        val interrupted =
+            songRepository.getDownloadingSongs().lastOrNull().orEmpty() +
+                songRepository.getPreparingSongs().lastOrNull().orEmpty()
+        Logger.i(TAG, "Resuming ${interrupted.size} interrupted downloads")
+        interrupted.forEach { enqueue(it.videoId, it.title) }
+    }
+
     override suspend fun downloadTrack(
         videoId: String,
         title: String,
         thumbnail: String,
     ) {
-        val song = songRepository.getSongById(videoId).lastOrNull()
+        // await() and not a plain call: leaving the screen may stop the asking, not the queueing.
+        coroutineScope.async { enqueue(videoId, title) }.await()
+    }
+
+    private suspend fun enqueue(
+        videoId: String,
+        title: String,
+    ) {
+        val song = songRepository.getSongById(videoId).lastOrNull() ?: return
         // Every download path ends here, so this is where a broadcast already known to be live is
         // turned away. One not known yet fails inside YouTube.download, which checks the stream.
-        if (song?.isLive == true) {
+        if (song.isLive) {
             Logger.i(TAG, "$videoId is a live stream, not downloading")
             songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
             publishDownloadTask(videoId, null)
             return
         }
-        if (song != null) {
-            songRepository.updateDownloadState(
-                videoId,
-                DownloadState.STATE_DOWNLOADING,
-            )
-            publishDownloadTask(videoId, DownloadState.STATE_DOWNLOADING)
-            onDownloadStarted(videoId, title)
-            if (!File(getDownloadPath()).exists()) {
-                File(getDownloadPath()).mkdirs()
-            }
-            songRepository
-                .downloadToFile(
-                    song.toTrack(),
-                    path = getDownloadPath() + File.separator + videoId,
-                    videoId = videoId,
-                    isVideo = false,
-                ).collect { state ->
-                    if (state.isError) {
-                        songRepository.updateDownloadState(
-                            videoId,
-                            DownloadState.STATE_NOT_DOWNLOADED,
-                        )
-                        publishDownloadTask(videoId, DownloadState.STATE_NOT_DOWNLOADED)
-                        onDownloadFinished(videoId, title, succeeded = false)
-                    } else if (state.isDone) {
-                        songRepository.updateDownloadState(
-                            videoId,
-                            DownloadState.STATE_DOWNLOADED,
-                        )
-                        publishDownloadTask(videoId, DownloadState.STATE_DOWNLOADED)
-                        onDownloadFinished(videoId, title, succeeded = true)
-                    }
-                }
-        }
+        if (!pendingIds.add(videoId)) return
+        songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
+        publishDownloadTask(videoId, DownloadState.STATE_DOWNLOADING)
+        onDownloadStarted(videoId, title)
+        queue.trySend(song)
     }
+
+    private suspend fun runDownload(song: SongEntity) {
+        val videoId = song.videoId
+        // Taken off the queue by removeDownload while it waited.
+        if (videoId !in pendingIds) return
+        var succeeded = false
+        val transfer = coroutineScope.launch(start = CoroutineStart.LAZY) { succeeded = transfer(song) }
+        transfers[videoId] = transfer
+        transfer.join()
+        transfers.remove(videoId)
+        if (!pendingIds.remove(videoId)) {
+            // Removed while it ran.
+            audioFile(videoId).delete()
+            return
+        }
+        val state = if (succeeded) DownloadState.STATE_DOWNLOADED else DownloadState.STATE_NOT_DOWNLOADED
+        if (!succeeded) audioFile(videoId).delete()
+        songRepository.updateDownloadState(videoId, state)
+        publishDownloadTask(videoId, state)
+        onDownloadFinished(videoId, song.title, succeeded)
+    }
+
+    /** A second try asks YouTube for a new stream, which is what a URL refused outright needs. */
+    private suspend fun transfer(song: SongEntity): Boolean {
+        File(getDownloadPath()).mkdirs()
+        repeat(DOWNLOAD_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(RETRY_DELAY_MS)
+            var done = false
+            var error: String? = null
+            try {
+                songRepository
+                    .downloadToFile(
+                        song.toTrack(),
+                        path = getDownloadPath() + File.separator + song.videoId,
+                        videoId = song.videoId,
+                        isVideo = false,
+                    ).collect { state ->
+                        if (state.isError) error = state.errorMessage ?: "unknown" else if (state.isDone) done = true
+                    }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: e.toString()
+            }
+            if (done && error == null) return true
+            Logger.e(TAG, "Download of ${song.videoId} failed, attempt ${attempt + 1}: $error")
+        }
+        return false
+    }
+
+    private fun audioFile(videoId: String) = File(getDownloadPath(), "$videoId.webm")
 
     // ===== Desktop download notifications =====
     //
     // Grouped per batch, the same way Android collapses every queued download into the single
     // foreground-service notification rather than one per track. One notification goes out when the
-    // queue goes from idle to busy, and one summary replaces it when the queue drains.
+    // queue goes from idle to busy, and one summary replaces it when the queue drains. A track counts
+    // from the moment it is queued: counted from its start, every track was a batch of its own.
     //
     // Progress cannot be tracked the way Android does: NotificationHandle only exposes dismiss(),
     // there is no update, and desktop notifications carry no progress bar. So the opening
@@ -135,6 +203,16 @@ internal class DownloadUtils(
     private var batchFailed = 0
     private var batchTotal = 0
     private var lastSongTitle = ""
+
+    // Last of the properties: these coroutines start at once and touch the ones above.
+    init {
+        repeat(PARALLEL_DOWNLOADS) {
+            coroutineScope.launch {
+                for (song in queue) runDownload(song)
+            }
+        }
+        coroutineScope.launch { resumeInterruptedDownloads() }
+    }
 
     private fun onDownloadStarted(
         videoId: String,
@@ -150,11 +228,13 @@ internal class DownloadUtils(
             lastSongTitle = songTitle
             // Only one track is known at this point, so name it. If more join the batch, the
             // closing notification switches to a count.
-            desktopNotificationManager.post(
-                id = ACTIVE_DOWNLOAD_NOTIFICATION_ID,
-                title = DOWNLOAD_STARTED_TITLE,
-                message = songTitle,
-            )
+            if (notificationsEnabled.value) {
+                desktopNotificationManager.post(
+                    id = ACTIVE_DOWNLOAD_NOTIFICATION_ID,
+                    title = DOWNLOAD_STARTED_TITLE,
+                    message = songTitle,
+                )
+            }
         }
         batchTotal++
     }
@@ -167,9 +247,23 @@ internal class DownloadUtils(
         activeDownloads -= videoId
         lastSongTitle = songTitle
         if (succeeded) batchCompleted++ else batchFailed++
+        closeBatchIfDone()
+    }
+
+    /** A removed track was neither a success nor a failure, so it leaves the batch without a trace. */
+    private fun onDownloadRemoved(videoId: String) =
+        synchronized(batchLock) {
+            if (activeDownloads.remove(videoId)) {
+                batchTotal--
+                closeBatchIfDone()
+            }
+        }
+
+    private fun closeBatchIfDone() {
         if (activeDownloads.isEmpty()) {
             // Clear the "started" notification so the tray shows one line about this batch, not two.
             desktopNotificationManager.dismiss(ACTIVE_DOWNLOAD_NOTIFICATION_ID)
+            if (batchTotal == 0 || !notificationsEnabled.value) return
             // A single-track batch says which track — that is what the user was waiting on. Several
             // tracks can only be summarised, since one notification cannot list them all.
             val summary =
@@ -187,35 +281,37 @@ internal class DownloadUtils(
         }
     }
 
-    override fun removeDownload(videoId: String) {
-        File(getDownloadPath())
-            .listFiles()
-            .filter {
-                it.name.contains(videoId)
-            }.forEach {
-                it.delete()
-                publishDownloadTask(videoId, null)
-                coroutineScope.launch {
-                    songRepository.updateDownloadState(
-                        videoId,
-                        DownloadState.STATE_NOT_DOWNLOADED,
-                    )
-                }
-            }
+    /** Takes [videoId] off the queue, or stops its transfer. False if it was neither queued nor running. */
+    private fun cancelDownload(videoId: String): Boolean {
+        if (!pendingIds.remove(videoId)) return false
+        transfers[videoId]?.cancel()
+        onDownloadRemoved(videoId)
+        return true
     }
 
-    override fun removeAllDownloads() {
-        _downloadTask.value = emptyMap()
-        File(getDownloadPath()).listFiles().forEach {
-            it.delete()
+    override fun removeDownload(videoId: String) {
+        val wasPending = cancelDownload(videoId)
+        val files = File(getDownloadPath()).listFiles().orEmpty().filter { it.name.contains(videoId) }
+        files.forEach { it.delete() }
+        if (wasPending || files.isNotEmpty()) {
+            publishDownloadTask(videoId, null)
             coroutineScope.launch {
                 songRepository.updateDownloadState(
-                    it.name.split(".").first().removePrefix(
-                        MERGING_DATA_TYPE.VIDEO,
-                    ),
+                    videoId,
                     DownloadState.STATE_NOT_DOWNLOADED,
                 )
             }
+        }
+    }
+
+    override fun removeAllDownloads() {
+        val pending = pendingIds.filter(::cancelDownload)
+        _downloadTask.value = emptyMap()
+        val files = File(getDownloadPath()).listFiles().orEmpty()
+        files.forEach { it.delete() }
+        val videoIds = pending + files.map { it.name.split(".").first().removePrefix(MERGING_DATA_TYPE.VIDEO) }
+        coroutineScope.launch {
+            videoIds.toSet().forEach { songRepository.updateDownloadState(it, DownloadState.STATE_NOT_DOWNLOADED) }
         }
     }
 }
