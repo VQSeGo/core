@@ -1,5 +1,6 @@
 package com.maxrave.data.repository
 
+import com.maxrave.common.Config
 import com.maxrave.data.db.datasource.LocalDataSource
 import com.maxrave.data.extension.getFullDataFromDB
 import com.maxrave.data.parser.parseArtistData
@@ -17,8 +18,10 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
+import kotlin.concurrent.Volatile
 
 internal class ArtistRepositoryImpl(
     private val localDataSource: LocalDataSource,
@@ -70,6 +73,11 @@ internal class ArtistRepositoryImpl(
             localDataSource.upsertArtistMotion(motion)
         }
 
+    // Moves on every follow, so a sync that read the account before it does not overwrite the tap.
+    @Volatile
+    private var followWrites = 0
+    private val followSyncMutex = Mutex()
+
     /**
      * Unfollowing also drops what only existed to serve the follow.
      *
@@ -77,41 +85,70 @@ internal class ArtistRepositoryImpl(
      * tracking row survived every unfollow — and once the unfollowed `artist` row is itself swept by
      * `SongRepository.clearHistoryAndOrphanedSongs`, they have nothing left to point back at.
      */
+    private suspend fun setFollowedLocally(
+        channelId: String,
+        followed: Boolean,
+    ) {
+        localDataSource.updateFollowed(if (followed) 1 else 0, channelId)
+        if (!followed) {
+            localDataSource.deleteNotificationsByChannelId(channelId)
+            localDataSource.deleteFollowedArtistSingleAndAlbum(channelId)
+        }
+    }
+
     override suspend fun updateFollowedStatus(
         channelId: String,
         followedStatus: Int,
     ): Boolean? =
         withContext(Dispatchers.Main) {
-            localDataSource.updateFollowed(followedStatus, channelId)
-            if (followedStatus == 0) {
-                localDataSource.deleteNotificationsByChannelId(channelId)
-                localDataSource.deleteFollowedArtistSingleAndAlbum(channelId)
-            }
-            // The local flag is already written above and stays written: Follow must not depend
-            // on the network. Mirroring is opt-in, and its outcome is handed back rather than
-            // swallowed so the caller can say something when the account could not be reached.
-            if (dataStoreManager.syncFollowToYouTube.first() != DataStoreManager.TRUE) {
+            followWrites++
+            setFollowedLocally(channelId, followedStatus == 1)
+            if (dataStoreManager.loggedIn.first() != DataStoreManager.TRUE) {
                 return@withContext null
             }
-            withContext(Dispatchers.IO) {
-                setSubscription(channelId, followedStatus == 1)
-            }
+            val updated = withContext(Dispatchers.IO) { setSubscription(channelId, followedStatus == 1) }
+            if (!updated) setFollowedLocally(channelId, followedStatus != 1)
+            updated
         }
 
-    override fun syncFollowedArtistsToYouTube(): Flow<Pair<Int, Int>> =
-        flow {
-            val followed =
-                getFullDataFromDB { limit, offset ->
-                    localDataSource.getFollowedArtists(limit, offset)
-                }
-            // Sequential on purpose. These are writes to someone's account, and firing a few
-            // hundred of them at once is exactly the shape that gets a session rate-limited.
-            var done = 0
-            followed.forEach { artist ->
-                if (setSubscription(artist.channelId, true)) done++
+    override suspend fun syncFollowedArtists() {
+        if (dataStoreManager.loggedIn.first() != DataStoreManager.TRUE || !followSyncMutex.tryLock()) return
+        try {
+            withContext(Dispatchers.IO) {
+                val writes = followWrites
+                youTube
+                    .getLibrarySubscriptions()
+                    .onSuccess { subscriptions ->
+                        // Empty is more likely a page the parser could not read than an account
+                        // with no subscriptions, and a follow made while this ran is not in the list.
+                        if (subscriptions.isEmpty() || writes != followWrites) {
+                            Logger.w("ArtistRepositoryImpl", "syncFollowedArtists: skipped, ${subscriptions.size} subscriptions read")
+                            return@onSuccess
+                        }
+                        val followed = getFullDataFromDB { limit, offset -> localDataSource.getFollowedArtists(limit, offset) }
+                        val followedIds = followed.map { it.channelId }.toSet()
+                        val subscribedIds = subscriptions.map { it.channelId }.toSet()
+                        followed.filter { it.channelId !in subscribedIds }.forEach { setFollowedLocally(it.channelId, false) }
+                        subscriptions.filter { it.channelId !in followedIds }.forEach { artist ->
+                            // Ignored when the row exists. Dated out of the library's recently added.
+                            localDataSource.insertArtist(
+                                ArtistEntity(
+                                    channelId = artist.channelId,
+                                    name = artist.name,
+                                    thumbnails = artist.thumbnail,
+                                    inLibrary = Config.REMOVED_SONG_DATE_TIME,
+                                ),
+                            )
+                            setFollowedLocally(artist.channelId, true)
+                        }
+                    }.onFailure {
+                        Logger.w("ArtistRepositoryImpl", "syncFollowedArtists: ${it.message}")
+                    }
             }
-            emit(done to followed.size)
-        }.flowOn(Dispatchers.IO)
+        } finally {
+            followSyncMutex.unlock()
+        }
+    }
 
     /** One subscribe/unsubscribe call, logged on failure. Returns whether the account was updated. */
     private suspend fun setSubscription(

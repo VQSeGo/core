@@ -47,7 +47,14 @@ data class SectionListRenderer(
         val musicResponsiveHeaderRenderer: MusicResponsiveHeaderRenderer?,
         val musicEditablePlaylistDetailHeaderRenderer: BrowseResponse.Header.MusicEditablePlaylistDetailHeaderRenderer?,
         val gridRenderer: GridRenderer?,
+        val itemSectionRenderer: ItemSectionRenderer? = null,
     ) {
+        /** Wraps a library shelf when the page also shows filter chips. */
+        @Serializable
+        data class ItemSectionRenderer(
+            val contents: List<Content>?,
+        )
+
         @Serializable
         data class MusicResponsiveHeaderRenderer(
             val description: Description?,

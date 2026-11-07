@@ -283,10 +283,6 @@ interface DataStoreManager {
 
     suspend fun setReverbMix(mix: Float)
 
-    val syncFollowToYouTube: Flow<String>
-
-    suspend fun setSyncFollowToYouTube(enabled: Boolean)
-
     val spotifyLyrics: Flow<String>
 
     suspend fun setSpotifyLyrics(spotifyLyrics: Boolean)

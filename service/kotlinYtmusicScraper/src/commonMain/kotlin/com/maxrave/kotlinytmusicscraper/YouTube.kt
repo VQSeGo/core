@@ -83,6 +83,8 @@ import com.maxrave.kotlinytmusicscraper.pages.RelatedPage
 import com.maxrave.kotlinytmusicscraper.pages.SearchPage
 import com.maxrave.kotlinytmusicscraper.pages.SearchResult
 import com.maxrave.kotlinytmusicscraper.pages.SearchSuggestionPage
+import com.maxrave.kotlinytmusicscraper.parser.LibrarySubscription
+import com.maxrave.kotlinytmusicscraper.parser.continuationSubscriptions
 import com.maxrave.kotlinytmusicscraper.parser.fromPlaylistContinuationToTrackWithSetVideoId
 import com.maxrave.kotlinytmusicscraper.parser.fromPlaylistContinuationToTracks
 import com.maxrave.kotlinytmusicscraper.parser.fromPlaylistToTrack
@@ -92,7 +94,11 @@ import com.maxrave.kotlinytmusicscraper.parser.getPlaylistContinuation
 import com.maxrave.kotlinytmusicscraper.parser.getReloadParams
 import com.maxrave.kotlinytmusicscraper.parser.getSuggestionSongItems
 import com.maxrave.kotlinytmusicscraper.parser.hasReloadParams
+import com.maxrave.kotlinytmusicscraper.parser.libraryShelf
+import com.maxrave.kotlinytmusicscraper.parser.nextContinuationPage
+import com.maxrave.kotlinytmusicscraper.parser.nextPage
 import com.maxrave.kotlinytmusicscraper.parser.playlistContinuationContents
+import com.maxrave.kotlinytmusicscraper.parser.subscriptions
 import com.maxrave.kotlinytmusicscraper.parser.toSongItem
 import com.maxrave.logger.Logger
 import com.mohamedrejeb.ksoup.html.parser.KsoupHtmlHandler
@@ -728,6 +734,38 @@ class YouTube {
                 continuation = page.getPlaylistContinuation()
             }
             songs
+        }
+
+    /**
+     * Every artist the account is subscribed to. Strict like [getLikedMusic]: the caller takes an
+     * artist missing from here as unsubscribed, so a page that fails or reads empty fails the result.
+     */
+    suspend fun getLibrarySubscriptions(): Result<List<LibrarySubscription>> =
+        runCatching {
+            val shelf =
+                ytMusic
+                    .browse(WEB_REMIX, "FEmusic_library_corpus_artists", setLogin = true)
+                    .body<BrowseResponse>()
+                    .libraryShelf() ?: return@runCatching emptyList()
+            val subscriptions = shelf.subscriptions().toMutableList()
+            var continuation = shelf.nextPage()
+            // A token seen twice would loop forever.
+            val seenContinuations = mutableSetOf<String>()
+            while (continuation != null && seenContinuations.add(continuation)) {
+                val page =
+                    ytMusic
+                        .browse(
+                            client = WEB_REMIX,
+                            setLogin = true,
+                            params = null,
+                            continuation = continuation,
+                        ).body<BrowseResponse>()
+                val rows = page.continuationSubscriptions()
+                check(rows.isNotEmpty()) { "Unreadable subscriptions page" }
+                subscriptions.addAll(rows)
+                continuation = page.nextContinuationPage()
+            }
+            subscriptions
         }
 
     suspend fun getSuggestionsTrackForPlaylist(playlistId: String): Result<Pair<String?, List<SongItem>?>?> =

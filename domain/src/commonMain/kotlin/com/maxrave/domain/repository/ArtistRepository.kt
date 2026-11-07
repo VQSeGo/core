@@ -35,25 +35,19 @@ interface ArtistRepository {
     suspend fun upsertArtistMotion(motion: ArtistMotionEntity)
 
     /**
-     * Records the follow locally, and mirrors it onto the YouTube account when that is enabled.
+     * Follows or unfollows on the YouTube account; the local flag is a copy of that, see
+     * [syncFollowedArtists].
      *
-     * Returns null when mirroring is off or was not attempted, true when the account was updated,
-     * false when the call failed — the caller decides whether that is worth telling the user
-     * about. The local flag is written either way: Follow must not depend on the network.
+     * Returns null when signed out, so only the local flag changed; true when the account was
+     * updated; false when the call failed, and the local flag has been put back.
      */
     suspend fun updateFollowedStatus(
         channelId: String,
         followedStatus: Int,
     ): Boolean?
 
-    /**
-     * Subscribes to every artist already followed locally.
-     *
-     * Turning the setting on is a statement about the whole library, not about the next artist
-     * tapped — without this, artists followed before the switch stay invisible to the account.
-     * Emits the number that succeeded and the number attempted.
-     */
-    fun syncFollowedArtistsToYouTube(): Flow<Pair<Int, Int>>
+    /** Makes the followed artists match the account's subscriptions. Writes nothing to the account. */
+    suspend fun syncFollowedArtists()
 
     fun getFollowedArtists(): Flow<List<ArtistEntity>>
 
