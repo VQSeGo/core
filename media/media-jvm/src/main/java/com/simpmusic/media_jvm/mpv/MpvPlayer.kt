@@ -283,6 +283,11 @@ class MpvPlayer private constructor(
             option("demuxer-max-bytes", (32 * 1024 * 1024).toString())
             option("demuxer-max-back-bytes", (8 * 1024 * 1024).toString())
 
+            // mpv's default is 60 s, and a connection that goes silent without closing is only
+            // reconnected once this runs out: at the default the track froze for ~50 s after the
+            // cache drained. Kept under cache-secs so the reconnect lands before anything is heard.
+            option("network-timeout", "8")
+
             // VLC ":http-reconnect".
             //
             // reconnect_streamed reopens a connection that ended early — right for one long

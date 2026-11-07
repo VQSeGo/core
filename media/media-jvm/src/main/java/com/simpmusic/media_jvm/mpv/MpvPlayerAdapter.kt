@@ -286,6 +286,11 @@ class MpvPlayerAdapter(
     // Retry system - mirrors Android CrossfadeExoPlayerAdapter retry logic
     private var retryCount = 0
     private var retryVideoId: String? = null
+
+    // Where a stream last died early, so a track that always dies at one spot is eventually let go.
+    private var earlyEndVideoId: String? = null
+    private var earlyEndPositionMs = 0L
+    private var earlyEndRetries = 0
     private val maxRetryCount = 2
 
     // Playlist management
@@ -1503,6 +1508,7 @@ class MpvPlayerAdapter(
         index: Int,
         startPositionMs: Long,
         shouldPlay: Boolean,
+        announceTransition: Boolean = true,
     ) {
         if (index !in playlist.indices) return
 
@@ -1514,15 +1520,20 @@ class MpvPlayerAdapter(
         currentLoadJob =
             coroutineScope.launch {
                 try {
+                    // Up front, not after the load: a load that fails is retried from here, and
+                    // must not pick up where the previous track had got to.
+                    cachedPosition = startPositionMs
                     transitionToState(InternalState.PREPARING)
 
                     // Notify media item transition (fire-and-forget to avoid
                     // blocking the service thread with runBlocking inside handler)
-                    notifyListeners {
-                        onMediaItemTransition(
-                            mediaItem,
-                            PlayerConstants.MEDIA_ITEM_TRANSITION_REASON_AUTO,
-                        )
+                    if (announceTransition) {
+                        notifyListeners {
+                            onMediaItemTransition(
+                                mediaItem,
+                                PlayerConstants.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                            )
+                        }
                     }
 
                     // Detach event listener from old player IMMEDIATELY before
@@ -1574,6 +1585,9 @@ class MpvPlayerAdapter(
                     if (cachedPrecache != null) {
                         // The precached handle already has the file loaded and held paused;
                         // unpausing is all that is needed (VLC needed an explicit play() here too).
+                        if (startPositionMs > 0) {
+                            player.seekTo(startPositionMs)
+                        }
                         if (shouldPlay) {
                             player.play()
                         }
@@ -1581,18 +1595,14 @@ class MpvPlayerAdapter(
                     } else {
                         val source = resolvedSource
                         if (source != null) {
-                            player.loadFile(buildPlaybackUrl(source), startPaused = !shouldPlay)
+                            // The position rides on the load: time-pos is unavailable until the file
+                            // is open, so seeking after this is refused and the track starts from 0.
+                            player.loadFile(buildPlaybackUrl(source), startPaused = !shouldPlay, startMs = startPositionMs)
                         } else {
                             Logger.e(TAG, "resolvedSource is null — should not happen")
                             transitionToState(InternalState.ERROR)
                             return@launch
                         }
-                    }
-
-                    if (startPositionMs > 0) {
-                        delay(100)
-                        player.seekTo(startPositionMs)
-                        cachedPosition = startPositionMs
                     }
 
                     // Always transition to READY first so UI receives
@@ -1685,6 +1695,7 @@ class MpvPlayerAdapter(
                             Logger.d(TAG, "Ignoring finished() during crossfade (old player ended)")
                             return@launch
                         }
+                        if (resumeAfterEarlyEnd()) return@launch
                         transitionToState(InternalState.ENDED)
                         handleTrackEndInternal()
                     }
@@ -1717,13 +1728,7 @@ class MpvPlayerAdapter(
                                 retryCount++
                                 Logger.w(TAG, "Retrying playback (attempt $retryCount/$maxRetryCount) for $currentVideoId")
                                 try {
-                                    // Invalidate cached format so fresh URL is fetched
-                                    streamRepository.invalidateFormat(currentVideoId)
-                                    streamRepository.invalidateFormat("${MERGING_DATA_TYPE.VIDEO}$currentVideoId")
-                                    // Evict stale precache
-                                    precachedPlayers.remove(currentVideoId)?.player?.release()
-                                    // Reload the track
-                                    loadAndPlayTrackInternal(localCurrentMediaItemIndex, 0L, shouldPlay = true)
+                                    reloadCurrentTrack(currentVideoId)
                                     return@launch
                                 } catch (e: Exception) {
                                     if (e is CancellationException) throw e
@@ -1929,6 +1934,52 @@ class MpvPlayerAdapter(
     /**
      * Handle track end
      */
+    /**
+     * Picks a stream back up after mpv reported an end of file that cannot be the track's end.
+     *
+     * A stream cut mid-track that cannot reconnect, because its URL has expired, reaches us as a
+     * plain EOF and not as an error (measured against libmpv: a 403 on the reconnect, at 0:27 of
+     * 4:00, gives MPV_END_FILE_REASON_EOF). Taken at face value that skips to the next track, or
+     * under Repeat One restarts this one.
+     *
+     * @return true when a reload was started and the end must not be handled.
+     */
+    private suspend fun resumeAfterEarlyEnd(): Boolean {
+        val videoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId ?: return false
+        val positionMs = cachedPosition
+        if (cachedDuration - positionMs <= EARLY_END_MARGIN_MS || isCurrentTrackLive()) return false
+        // Getting further than last time counts as recovering, so only a stream that keeps dying
+        // at the same place uses up its attempts.
+        if (videoId != earlyEndVideoId || positionMs - earlyEndPositionMs > EARLY_END_MARGIN_MS) {
+            earlyEndRetries = 0
+        }
+        earlyEndVideoId = videoId
+        earlyEndPositionMs = positionMs
+        if (earlyEndRetries >= maxRetryCount) {
+            Logger.e(TAG, "Stream for $videoId keeps ending at ${positionMs}ms of ${cachedDuration}ms, moving on")
+            return false
+        }
+        earlyEndRetries++
+        Logger.w(TAG, "Stream for $videoId ended at ${positionMs}ms of ${cachedDuration}ms, resuming (attempt $earlyEndRetries/$maxRetryCount)")
+        reloadCurrentTrack(videoId)
+        return true
+    }
+
+    /** Reloads the current track from a fresh URL at the position it had reached. */
+    private suspend fun reloadCurrentTrack(videoId: String) {
+        streamRepository.invalidateFormat(videoId)
+        streamRepository.invalidateFormat("${MERGING_DATA_TYPE.VIDEO}$videoId")
+        // Evict stale precache
+        precachedPlayers.remove(videoId)?.player?.release()
+        loadAndPlayTrackInternal(
+            localCurrentMediaItemIndex,
+            startPositionMs = if (isCurrentTrackLive()) 0L else cachedPosition,
+            shouldPlay = internalPlayWhenReady,
+            // Still the same track: announcing it would log a second listen and restart Discord's bar.
+            announceTransition = false,
+        )
+    }
+
     private fun handleTrackEndInternal() {
         // If crossfade is already in progress (triggered by position update before track ended),
         // don't interrupt it. The old player ending is expected — the crossfade will complete
@@ -2665,6 +2716,9 @@ class MpvPlayerAdapter(
     companion object {
         /** Floor for the shortest track worth crossfading, in ms. */
         private const val MIN_CROSSFADE_TRACK_MS = 20_000L
+
+        /** An end of file further than this from the track's length means the stream died, not that it finished. */
+        private const val EARLY_END_MARGIN_MS = 5_000L
 
         private const val AUTO_FALLBACK_DURATION_MS = 30000
         private const val STRUCTURE_RETRY_MS = 30_000L
