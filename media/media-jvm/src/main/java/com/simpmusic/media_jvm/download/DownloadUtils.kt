@@ -43,7 +43,10 @@ private const val DOWNLOAD_RESULT_NOTIFICATION_ID = "downloads.result"
 
 // Enough that one slow track does not hold up the rest, few enough not to compete with the player.
 private const val PARALLEL_DOWNLOADS = 3
-private const val DOWNLOAD_ATTEMPTS = 2
+
+// YouTube answers about one stream request in five with no URL and gives one seconds later, so a
+// track gets several tries. Playback asks again the same way.
+private const val DOWNLOAD_ATTEMPTS = 4
 private const val RETRY_DELAY_MS = 2_000L
 
 internal class DownloadUtils(
@@ -156,11 +159,11 @@ internal class DownloadUtils(
         onDownloadFinished(videoId, song.title, succeeded)
     }
 
-    /** A second try asks YouTube for a new stream, which is what a URL refused outright needs. */
+    /** Each try asks YouTube for the stream anew, which is also what a URL refused outright needs. */
     private suspend fun transfer(song: SongEntity): Boolean {
         File(getDownloadPath()).mkdirs()
         repeat(DOWNLOAD_ATTEMPTS) { attempt ->
-            if (attempt > 0) delay(RETRY_DELAY_MS)
+            if (attempt > 0) delay(RETRY_DELAY_MS shl (attempt - 1))
             var done = false
             var error: String? = null
             try {
