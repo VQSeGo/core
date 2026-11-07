@@ -251,12 +251,7 @@ class Ytmusic {
                 val cookie = customCookie ?: this@Ytmusic.cookie
                 cookie?.let { cookie ->
                     append("Cookie", cookie)
-                    if ("SAPISID" !in cookieMap || "__Secure-3PAPISID" !in cookieMap) return@let
-                    val currentTime = now().toInstant(TimeZone.currentSystemDefault()).epochSeconds / 1000
-                    val sapisidCookie = cookieMap["SAPISID"] ?: cookieMap["__Secure-3PAPISID"]
-                    val sapisidHash = sha1("$currentTime $sapisidCookie https://music.youtube.com")
-                    Logger.d(TAG, "SAPI SID Hash: SAPISIDHASH ${currentTime}_$sapisidHash")
-                    append("Authorization", "SAPISIDHASH ${currentTime}_$sapisidHash")
+                    getAuthorizationHeader()?.let { append("Authorization", it) }
                 }
             }
         }
@@ -265,15 +260,27 @@ class Ytmusic {
     }
 
     @OptIn(ExperimentalTime::class)
-    internal fun getAuthorizationHeader(): String? =
-        cookie?.let { cookie ->
-            if ("SAPISID" !in cookieMap || "__Secure-3PAPISID" !in cookieMap) null
-            val currentTime = now().toInstant(TimeZone.currentSystemDefault()).epochSeconds / 1000
-            val sapisidCookie = cookieMap["SAPISID"] ?: cookieMap["__Secure-3PAPISID"]
-            val sapisidHash = sha1("$currentTime $sapisidCookie https://music.youtube.com")
-            Logger.d(TAG, "SAPI SID Hash: SAPISIDHASH ${currentTime}_$sapisidHash")
-            "SAPISIDHASH ${currentTime}_$sapisidHash"
-        }
+    /**
+     * What a browser sends: one hash of `<unix seconds> <cookie value> <origin>` per API cookie it holds,
+     * each under its own scheme. A cookie copied from DevTools often has only the 3P one (no SAPISID),
+     * and without any hash YouTube answers as a guest, whatever else the cookie carries.
+     */
+    internal fun getAuthorizationHeader(): String? {
+        if (cookie.isNullOrEmpty()) return null
+        val currentTime = now().toInstant(TimeZone.currentSystemDefault()).epochSeconds
+        val schemes =
+            listOf(
+                "SAPISIDHASH" to "SAPISID",
+                "SAPISID1PHASH" to "__Secure-1PAPISID",
+                "SAPISID3PHASH" to "__Secure-3PAPISID",
+            )
+        val hashes =
+            schemes.mapNotNull { (scheme, cookieName) ->
+                val value = cookieMap[cookieName] ?: return@mapNotNull null
+                "$scheme ${currentTime}_${sha1("$currentTime $value https://music.youtube.com")}"
+            }
+        return hashes.takeIf { it.isNotEmpty() }?.joinToString(" ")
+    }
 
     fun getNewPipePlayer(videoId: String): List<Pair<Int, String>> = extractor.newPipePlayer(videoId)
 
