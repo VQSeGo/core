@@ -155,11 +155,13 @@ internal class ArtistRepositoryImpl(
         channelId: String,
         subscribe: Boolean,
     ): Boolean {
+        val target = youTube.subscriptionChannelId(channelId).getOrNull() ?: channelId
         val result =
-            if (subscribe) {
-                youTube.subscribeChannel(channelId)
-            } else {
-                youTube.unsubscribeChannel(channelId)
+            when {
+                subscribe -> youTube.subscribeChannel(target)
+                target == channelId -> youTube.unsubscribeChannel(target)
+                // A follow from before the button's channel was read went to the page's own id.
+                else -> youTube.unsubscribeChannel(target).recoverCatching { youTube.unsubscribeChannel(channelId).getOrThrow() }
             }
         return result
             .onFailure {

@@ -2237,6 +2237,25 @@ class YouTube {
     }
 
     /**
+     * The channel an artist page's subscribe button acts on, or null if the page has no button.
+     *
+     * Usually not the page's own id: the page is often a Topic channel while the button belongs to
+     * the artist's real channel, and a subscription exists only on that one. Unsubscribing from the
+     * page's id answers FAILED_PRECONDITION.
+     */
+    suspend fun subscriptionChannelId(artistId: String) =
+        runCatching {
+            ytMusic
+                .browse(WEB_REMIX, artistId)
+                .body<BrowseResponse>()
+                .header
+                ?.musicImmersiveHeaderRenderer
+                ?.subscriptionButton
+                ?.subscribeButtonRenderer
+                ?.channelId
+        }
+
+    /**
      * Subscribes the signed-in account to a channel.
      *
      * Returns the HTTP status rather than a parsed body, the same way the like endpoints do —

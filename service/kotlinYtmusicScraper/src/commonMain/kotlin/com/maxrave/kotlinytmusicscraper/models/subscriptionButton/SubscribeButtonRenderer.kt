@@ -7,4 +7,5 @@ import kotlinx.serialization.Serializable
 data class SubscribeButtonRenderer(
     @SerialName("longSubscriberCountText")
     val longSubscriberCountText: LongSubscriberCountText,
+    val channelId: String? = null,
 )
