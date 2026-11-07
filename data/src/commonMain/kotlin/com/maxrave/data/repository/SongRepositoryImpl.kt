@@ -12,6 +12,7 @@ import com.maxrave.data.mapping.toSongItemForDownload
 import com.maxrave.data.mapping.toWatchEndpoint
 import com.maxrave.domain.data.entities.QueueEntity
 import com.maxrave.domain.data.entities.DownloadState
+import com.maxrave.domain.data.entities.LyricsOffsetEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.entities.SongInfoEntity
 import com.maxrave.domain.data.entities.analytics.query.SongPlaySample
@@ -341,6 +342,19 @@ internal class SongRepositoryImpl(
      * already depends on this repository (it calls [recoverQueue] whenever it saves the queue).
      */
     private val mediaPlayerHandler: MediaPlayerHandler by lazy { getKoin().get() }
+
+    override fun getLyricsOffsetMs(videoId: String): Flow<Int> = localDataSource.getLyricsOffsetMs(videoId).map { it ?: 0 }
+
+    override suspend fun setLyricsOffsetMs(
+        videoId: String,
+        offsetMs: Int,
+    ) = withContext(Dispatchers.IO) {
+        if (offsetMs == 0) {
+            localDataSource.clearLyricsOffset(videoId)
+        } else {
+            localDataSource.setLyricsOffset(LyricsOffsetEntity(videoId, offsetMs))
+        }
+    }
 
     private val _likeFailures =
         MutableSharedFlow<LikeFailure>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)

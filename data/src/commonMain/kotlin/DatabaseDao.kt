@@ -15,6 +15,7 @@ import com.maxrave.domain.data.entities.AutoEqEntryEntity
 import com.maxrave.domain.data.entities.AutoEqIndexMetaEntity
 import com.maxrave.domain.data.entities.EpisodeEntity
 import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
+import com.maxrave.domain.data.entities.LyricsOffsetEntity
 import com.maxrave.domain.data.entities.GoogleAccountEntity
 import com.maxrave.domain.data.entities.LocalPlaylistEntity
 import com.maxrave.domain.data.entities.LyricsEntity
@@ -273,6 +274,15 @@ interface DatabaseDao {
         videoId: String,
         favoriteAt: LocalDateTime? = if (liked == 1) now() else null,
     )
+
+    @Query("SELECT offsetMs FROM lyrics_offset WHERE videoId = :videoId")
+    fun getLyricsOffsetMs(videoId: String): Flow<Int?>
+
+    @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
+    suspend fun setLyricsOffset(offset: LyricsOffsetEntity)
+
+    @Query("DELETE FROM lyrics_offset WHERE videoId = :videoId")
+    suspend fun clearLyricsOffset(videoId: String)
 
     @Query("UPDATE song SET liked = 0, favoriteAt = NULL WHERE liked = 1")
     suspend fun clearLiked()

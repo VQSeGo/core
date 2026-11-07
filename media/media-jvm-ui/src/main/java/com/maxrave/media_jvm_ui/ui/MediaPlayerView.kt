@@ -42,8 +42,9 @@ import coil3.request.crossfade
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.data.model.streams.TimeLine
 import com.maxrave.domain.data.player.AppOnScreen
-import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
+import com.maxrave.domain.mediaservice.handler.currentLyricsOffsetMs
+import com.maxrave.domain.repository.SongRepository
 import com.simpmusic.media_jvm.mpv.MpvPlayer
 import com.simpmusic.media_jvm.mpv.MpvPlayerAdapter
 import com.simpmusic.media_jvm.mpv.MpvVideoFrameSource
@@ -204,7 +205,8 @@ fun MediaPlayerViewWithSubtitleJvm(
 
     // Subtitles over the video are lyrics like any other, so they take the same audio-delay
     // correction the lyrics sheet does.
-    val lyricsOffsetMs by koinInject<DataStoreManager>().lyricsOffsetMs.collectAsState(0)
+    val songRepository = koinInject<SongRepository>()
+    val lyricsOffsetMs by remember { songRepository.currentLyricsOffsetMs(mediaPlayerHandler) }.collectAsState(0)
 
     val state by mediaPlayerHandler.nowPlayingState.collectAsState()
     val videoFrames by player.currentVideoFrames.collectAsState()

@@ -99,6 +99,17 @@ interface SongRepository {
 
     suspend fun resetTotalPlayTime(videoId: String)
 
+    /**
+     * How far this track's lyrics are moved, applied where they are read. Signed and unbounded:
+     * positive pushes them later (the Bluetooth case), negative pulls them earlier.
+     */
+    fun getLyricsOffsetMs(videoId: String): Flow<Int>
+
+    suspend fun setLyricsOffsetMs(
+        videoId: String,
+        offsetMs: Int,
+    )
+
     /** Likes that did not reach the account, whichever button asked for them. */
     val likeFailures: SharedFlow<LikeFailure>
 

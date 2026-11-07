@@ -13,6 +13,7 @@ import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
 import com.maxrave.domain.data.entities.GoogleAccountEntity
 import com.maxrave.domain.data.entities.LocalPlaylistEntity
 import com.maxrave.domain.data.entities.LyricsEntity
+import com.maxrave.domain.data.entities.LyricsOffsetEntity
 import com.maxrave.domain.data.entities.NewFormatEntity
 import com.maxrave.domain.data.entities.NotificationEntity
 import com.maxrave.domain.data.entities.PairSongLocalPlaylist
@@ -267,6 +268,12 @@ internal class LocalDataSource(
     ) = databaseDao.updateLiked(liked, videoId)
 
     suspend fun replaceLikedSongs(songs: List<SongEntity>) = databaseDao.replaceLikedSongs(songs)
+
+    fun getLyricsOffsetMs(videoId: String) = databaseDao.getLyricsOffsetMs(videoId)
+
+    suspend fun setLyricsOffset(offset: LyricsOffsetEntity) = databaseDao.setLyricsOffset(offset)
+
+    suspend fun clearLyricsOffset(videoId: String) = databaseDao.clearLyricsOffset(videoId)
 
     suspend fun updateDurationSeconds(
         durationSeconds: Int,

@@ -66,7 +66,9 @@ import com.maxrave.common.Config
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.data.model.streams.TimeLine
 import com.maxrave.domain.data.model.ui.ScreenSizeInfo
-import com.maxrave.domain.manager.DataStoreManager
+import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
+import com.maxrave.domain.mediaservice.handler.currentLyricsOffsetMs
+import com.maxrave.domain.repository.SongRepository
 import com.maxrave.logger.Logger
 import com.maxrave.media3.ui.extension.KeepScreenOn
 import org.koin.compose.koinInject
@@ -260,7 +262,9 @@ fun MediaPlayerViewWithSubtitle(
     // correction the lyrics sheet does. timelineState is used for nothing else in this composable,
     // but it is subtracted at each read rather than up front so the parameter keeps meaning "where
     // the player is".
-    val lyricsOffsetMs by koinInject<DataStoreManager>().lyricsOffsetMs.collectAsState(0)
+    val songRepository = koinInject<SongRepository>()
+    val mediaPlayerHandler = koinInject<MediaPlayerHandler>()
+    val lyricsOffsetMs by remember { songRepository.currentLyricsOffsetMs(mediaPlayerHandler) }.collectAsState(0)
 
     var shouldEnterPipMode by rememberSaveable {
         mutableStateOf(false)

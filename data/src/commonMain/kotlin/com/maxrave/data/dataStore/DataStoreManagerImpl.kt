@@ -1016,19 +1016,6 @@ internal class DataStoreManagerImpl(
         }
     }
 
-    override val lyricsOffsetMs =
-        settingsDataStore.data.map { preferences ->
-            preferences[LYRICS_OFFSET_MS] ?: 0
-        }
-
-    override suspend fun setLyricsOffsetMs(offsetMs: Int) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[LYRICS_OFFSET_MS] = offsetMs
-            }
-        }
-    }
-
     override val usingProxy =
         settingsDataStore.data.map { preferences ->
             preferences[USING_PROXY] ?: FALSE
@@ -1912,7 +1899,6 @@ internal class DataStoreManagerImpl(
         val NOW_PLAYING_STYLE = stringPreferencesKey("now_playing_style")
         val LYRICS_STYLE = stringPreferencesKey("lyrics_style")
         val ROMANIZATION_LANGUAGES = stringPreferencesKey("romanization_languages")
-        val LYRICS_OFFSET_MS = intPreferencesKey("lyrics_offset_ms")
         val USING_PROXY = stringPreferencesKey("using_proxy")
         val PROXY_TYPE = stringPreferencesKey("proxy_type")
         val PROXY_HOST = stringPreferencesKey("proxy_host")
