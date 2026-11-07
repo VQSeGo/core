@@ -69,6 +69,7 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.serialization.kotlinx.protobuf.protobuf
 import io.ktor.serialization.kotlinx.xml.xml
 import io.ktor.utils.io.readRemaining
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -1111,20 +1112,28 @@ class Ytmusic {
                         },
                     )
                 } else {
-                    // Fallback to single-threaded download
-                    singleThreadedDownload(
-                        url = url,
-                        path = path,
-                        maxRetries = maxRetries,
-                        downloadBufferSize = downloadBufferSize,
-                        onProgress = { downloaded, speed ->
-                            trySend(Triple(false, downloaded, speed))
-                        },
-                        onComplete = { success, exception ->
-                            lastException = exception
-                            trySend(Triple(true, if (success) 1f else 0f, 0))
-                        },
-                    )
+                    // Fallback to a single connection
+                    val failure =
+                        try {
+                            downloadInRanges(
+                                url = url,
+                                path = path,
+                                userAgent = DOWNLOAD_USER_AGENT,
+                                maxRetries = maxRetries,
+                                bufferSize = downloadBufferSize,
+                                onProgress = { downloaded, speed ->
+                                    trySend(Triple(false, downloaded, speed))
+                                },
+                            )
+                            null
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Logger.e(TAG, "Download failed: ${e.message}")
+                            e
+                        }
+                    lastException = failure
+                    trySend(Triple(true, if (failure == null) 1f else 0f, 0))
                 }
             }
         }
@@ -1249,113 +1258,6 @@ class Ytmusic {
             }
             onComplete(false, e)
         }
-    }
-
-    private suspend fun HttpClient.singleThreadedDownload(
-        url: String,
-        path: Path,
-        maxRetries: Int,
-        downloadBufferSize: Int,
-        onProgress: suspend (Float, Int) -> Unit,
-        onComplete: (Boolean, Throwable?) -> Unit,
-    ) {
-        val fileSystem = FileSystem.SYSTEM
-        var lastException: Throwable? = null
-        var downloadedBytes = 0L
-        var jobDone = 0
-
-        repeat(maxRetries + 1) { attempt ->
-            if (jobDone == 1) return@repeat
-
-            if (attempt > 0) {
-                try {
-                    if (fileSystem.exists(path)) {
-                        fileSystem.delete(path)
-                    }
-                } catch (e: IOException) {
-                    e.printStackTrace()
-                }
-                downloadedBytes = 0L
-                val delayMs = (500L * (1 shl (attempt - 1))).coerceAtMost(10000L)
-                Logger.d(TAG, "Retry attempt $attempt after ${delayMs}ms delay")
-                delay(delayMs)
-            }
-
-            try {
-                val length =
-                    head(url) {
-                        header("User-Agent", DOWNLOAD_USER_AGENT)
-                    }.headers[HttpHeaders.ContentLength]?.toLong() ?: 0
-
-                coroutineScope {
-                    val downloadJob =
-                        launch {
-                            runCatching {
-                                prepareRequest {
-                                    url(url)
-                                    header("User-Agent", DOWNLOAD_USER_AGENT)
-                                    header("Accept", "*/*")
-                                }.execute { res ->
-                                    val channel = res.bodyAsChannel()
-                                    fileSystem.sink(path).buffer().use { sink ->
-                                        while (!channel.isClosedForRead) {
-                                            val packet = channel.readRemaining(downloadBufferSize.toLong())
-                                            while (!packet.exhausted()) {
-                                                val bytes = packet.readByteArray()
-                                                sink.write(bytes)
-                                                downloadedBytes += bytes.size
-                                            }
-                                        }
-                                    }
-                                }
-                            }.onSuccess {
-                                Logger.d(TAG, "Download completed: $downloadedBytes bytes")
-                                jobDone = 1
-                            }.onFailure { e ->
-                                Logger.e(TAG, "Download failed: ${e.message}")
-                                lastException = e
-                                jobDone = 1
-                            }
-                        }
-
-                    val emitJob =
-                        launch {
-                            var lastEmittedProgress = -1f
-                            while (jobDone < 1) {
-                                delay(200)
-                                if (length > 0) {
-                                    val progress = downloadedBytes.toFloat() / length
-                                    val progressDiff =
-                                        if (progress > lastEmittedProgress) {
-                                            progress - lastEmittedProgress
-                                        } else {
-                                            lastEmittedProgress - progress
-                                        }
-                                    if (progressDiff >= 0.01f || progress >= 1f) {
-                                        val elapsedSeconds = (downloadedBytes / 1024.0) / 200.0
-                                        val speed = if (elapsedSeconds > 0) (downloadedBytes / elapsedSeconds / 1024).toInt() else 0
-                                        lastEmittedProgress = progress
-                                        onProgress(progress, speed)
-                                    }
-                                }
-                            }
-                        }
-
-                    downloadJob.join()
-                    emitJob.cancel()
-                }
-            } catch (e: Exception) {
-                Logger.e(TAG, "Download attempt $attempt failed: ${e.message}")
-                lastException = e
-                if (attempt == maxRetries) {
-                    jobDone = 1
-                }
-            }
-        }
-
-        Logger.d(TAG, "Download finished: $downloadedBytes bytes")
-        val isSuccess = lastException == null && downloadedBytes > 0
-        onComplete(isSuccess, lastException)
     }
 
     suspend fun is403Url(url: String): Boolean {
