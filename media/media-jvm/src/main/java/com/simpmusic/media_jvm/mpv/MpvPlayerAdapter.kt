@@ -5,6 +5,8 @@ import com.maxrave.domain.data.player.AppOnScreen
 import com.maxrave.domain.data.player.AudioEffects
 import com.maxrave.domain.data.player.AudioOutput
 import com.maxrave.domain.data.player.AudioOutputKind
+import com.maxrave.domain.data.player.EightDEffect
+import com.maxrave.domain.data.player.EightDOrbit
 import com.maxrave.domain.data.player.GenericMediaItem
 import com.maxrave.domain.data.player.GenericPlaybackParameters
 import com.maxrave.domain.data.player.LiveStreamRegistry
@@ -157,6 +159,11 @@ class MpvPlayerAdapter(
     /** Sleep-timer fade gain, kept apart from [internalVolume] so the user's level survives it. */
     @Volatile
     private var internalSleepFadeFactor = 1.0f
+
+    private val eightDOrbit = EightDOrbit()
+    private val _eightDAvailable = MutableStateFlow(true)
+    override val eightDAvailable: StateFlow<Boolean> = _eightDAvailable.asStateFlow()
+    private var eightDCleanupJob: Job? = null
 
     /**
      * Pitch shift the user asked for, 1.0 = unchanged.
@@ -1215,6 +1222,9 @@ class MpvPlayerAdapter(
         if (effects != AudioEffects.NONE) {
             setAudioEffects(effects, ensureReverbIr(effects))
         }
+        if (_eightDAvailable.value && eightDOrbit.snapshot().effect != null) {
+            if (!setEightD(eightDOrbit)) markEightDUnavailable()
+        }
         // And the output: a fresh handle opens the system default, so without this the next track
         // would quietly leave the device the user picked.
         preferredAudioDevice?.let { setAudioDevice(it) }
@@ -1313,6 +1323,50 @@ class MpvPlayerAdapter(
         }
     }
 
+    override fun setEightD(effect: EightDEffect?) {
+        val normalized = effect?.normalized()
+        coroutineScope.launch {
+            val previous = eightDOrbit.snapshot().effect
+            if (previous == normalized) return@launch
+            eightDCleanupJob?.cancel()
+            eightDOrbit.setEffect(normalized)
+            if (!_eightDAvailable.value) {
+                forEachLiveHandle { it.setEightD(null) }
+            } else if (normalized != null) {
+                // Switching on fades in, also inside a switch-off's fade; a retune does not.
+                var refused = false
+                forEachLiveHandle { if (!it.setEightD(eightDOrbit, fadeIn = previous == null)) refused = true }
+                if (refused) markEightDUnavailable()
+            } else if (previous != null) {
+                forEachLiveHandle { it.setEightD(eightDOrbit, fadeOutEffect = previous) }
+                eightDCleanupJob = coroutineScope.launch {
+                    delay(EightDEffect.TRANSITION_MS)
+                    if (eightDOrbit.snapshot().effect == null) {
+                        forEachLiveHandle { it.setEightD(null) }
+                    }
+                }
+            }
+        }
+    }
+
+    /** A refused filter is a fact about this libmpv: stop asking every handle; the other tiers stay. */
+    private fun markEightDUnavailable() {
+        _eightDAvailable.value = false
+        forEachLiveHandle { it.setEightD(null) }
+    }
+
+    /** 8D bookkeeping every listened-to handle needs: the first install, and the live phase after each seek. */
+    private open inner class EightDSyncListener : MpvPlayerEventAdapter() {
+        override fun restarted(player: MpvPlayer) = syncEightD(player)
+
+        override fun seeking(player: MpvPlayer) = syncEightD(player)
+
+        private fun syncEightD(player: MpvPlayer) {
+            // MpvPlayer ignores the call once released, so no ownership check is needed.
+            coroutineScope.launch { if (!player.syncEightD()) markEightDUnavailable() }
+        }
+    }
+
     /** @return the impulse response path for [effects], or null when there is no reverb to install. */
     private fun ensureReverbIr(effects: AudioEffects): String? = effects.reverb?.let { ReverbIrFiles.ensure(it.preset)?.absolutePath }
 
@@ -1399,6 +1453,8 @@ class MpvPlayerAdapter(
     // ========== Release Resources ==========
 
     override fun release() {
+        eightDCleanupJob?.cancel()
+        eightDOrbit.setPlaying(false)
         currentLoadJob?.cancel()
         precacheJob?.cancel()
         positionUpdateJob?.cancel()
@@ -1434,6 +1490,7 @@ class MpvPlayerAdapter(
 
         val oldState = internalState
         internalState = newState
+        eightDOrbit.setPlaying(newState == InternalState.PLAYING)
 
         Logger.d(TAG, "State transition: $oldState -> $newState (playWhenReady=$internalPlayWhenReady)")
 
@@ -1707,7 +1764,7 @@ class MpvPlayerAdapter(
         cleanupEventListenerInternal()
 
         val listener =
-            object : MpvPlayerEventAdapter() {
+            object : EightDSyncListener() {
                 override fun finished(player: MpvPlayer) {
                     Logger.d(TAG, "End of stream reached")
                     coroutineScope.launch {
@@ -1866,6 +1923,9 @@ class MpvPlayerAdapter(
                     if (isStalled != cachedIsLoading) {
                         Logger.d(TAG, "isLoading changed: $cachedIsLoading -> $isStalled")
                         cachedIsLoading = isStalled
+                        // A stall stops the audio but not the PLAYING state; the orbit must stop
+                        // with the audio, or the next handle joins ahead of what was heard.
+                        eightDOrbit.setPlaying(internalState == InternalState.PLAYING && !isStalled)
                         notifyListeners { onIsLoadingChanged(isStalled) }
                     }
                 }
@@ -2129,7 +2189,7 @@ class MpvPlayerAdapter(
                         // the event listener from the current player (which is still playing).
                         secondaryPlayer = nextPlayer
                         nextPlayer.setEventListener(
-                            object : MpvPlayerEventAdapter() {
+                            object : EightDSyncListener() {
                                 override fun error(player: MpvPlayer) {
                                     Logger.e(TAG, "Secondary player error during crossfade")
                                     coroutineScope.launch {
