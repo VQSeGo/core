@@ -20,10 +20,21 @@ private const val TAG = "Extractor"
 private const val LOCAL_TIER = "local"
 private const val REMOTE_TIER = "pipepipe.dev"
 
+/**
+ * How long BravePipe goes first after both PipePipe tiers failed and it answered. Measured
+ * 2026-11-13: every PipePipe URL came back 403 at the HEAD check, which spent 4-17 s per track
+ * before BravePipe (1.4-3.7 s) was asked at all. Half an hour, so PipePipe gets probed again.
+ */
+private const val BRAVE_FIRST_MS = 30 * 60 * 1000L
+
 actual class Extractor {
     private var newPipeDownloader = NewPipeDownloaderImpl(proxy = null)
     private var braveNewPipeDownloader = BraveNewPipeDownloaderImpl(proxy = null)
     private val faradayDecoder = FaradayJsDecoder()
+
+    /** Until when BravePipe is asked before the PipePipe tiers; see [BRAVE_FIRST_MS]. */
+    @Volatile
+    private var braveFirstUntil = 0L
 
     actual fun init() {
         NewPipe.init(newPipeDownloader)
@@ -42,6 +53,16 @@ actual class Extractor {
         // and merely rejected by the CDN. Nothing throws, so the server tier is never asked, and a
         // 403 used to skip straight to BravePipe. Driving the two as separate attempts is what
         // stops that jump.
+
+        // Tier 0 — BravePipe up front while the PipePipe tiers are known to fail. Its URL is
+        // HEAD-checked here, since a rejection must still reach the PipePipe tiers below.
+        val braveFirst = System.currentTimeMillis() < braveFirstUntil
+        if (braveFirst) {
+            val early = timedStage(videoId, "brave-first") { braveStreams(videoId) }
+            if (early.isNotEmpty() && early.headCheckRandomStream()) return early
+            Logger.i("Offline", "resolve $videoId brave-first rejected, back to PipePipe")
+            braveFirstUntil = 0L
+        }
 
         // Tier 1 — ciphers solved locally.
         // Re-registered every time: PipePipe drops the local decoder for good the first time it
@@ -62,7 +83,10 @@ actual class Extractor {
         timedStage(videoId, "pipepipe-remote") { pipePipeStreams(videoId, REMOTE_TIER) }?.let { return it }
 
         // Tier 3 — a different extractor entirely.
-        return timedStage(videoId, "brave") { braveStreams(videoId) }
+        return timedStage(videoId, "brave") { braveStreams(videoId) }.also {
+            // Only when BravePipe was not just refused up front: its URL is not HEAD-checked here.
+            if (it.isNotEmpty() && !braveFirst) braveFirstUntil = System.currentTimeMillis() + BRAVE_FIRST_MS
+        }
     }
 
     /** One `Offline` timing line per extraction tier, for the stream-resolution measurements. */
