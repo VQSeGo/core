@@ -378,6 +378,15 @@ class MpvPlayerAdapter(
                         Logger.d(TAG, "Pause: During PREPARING - will not auto-play")
                     }
 
+                    InternalState.ERROR -> {
+                        // Nothing to pause after a track failed, but the intent still counts, as on
+                        // Android: the next track loaded must not start on its own, and a failure
+                        // there must not skip on. (Not IDLE: a play() queued right behind this
+                        // pause would find IDLE too and could not set the intent back.)
+                        internalPlayWhenReady = false
+                        Logger.d(TAG, "Pause: after an error - will not auto-play")
+                    }
+
                     else -> {
                         Logger.w(TAG, "Pause: Called in invalid state: $internalState")
                     }
