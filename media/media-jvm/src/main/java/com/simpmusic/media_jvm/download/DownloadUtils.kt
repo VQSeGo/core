@@ -29,6 +29,9 @@ import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "DownloadUtils"
@@ -48,6 +51,10 @@ private const val PARALLEL_DOWNLOADS = 3
 // track gets several tries. Playback asks again the same way.
 private const val DOWNLOAD_ATTEMPTS = 4
 private const val RETRY_DELAY_MS = 2_000L
+
+// A transfer writes here and nowhere else. The player takes any `<videoId>.webm` in the downloads
+// folder for a finished track, so a file may only appear there whole, by a rename out of this folder.
+private const val PARTIAL_DIR = ".partial"
 
 internal class DownloadUtils(
     private val dataStoreManager: DataStoreManager,
@@ -100,13 +107,53 @@ internal class DownloadUtils(
     private val pendingIds = ConcurrentHashMap.newKeySet<String>()
     private val transfers = ConcurrentHashMap<String, Job>()
 
-    /** A row still marked as downloading has no transfer behind it at launch: the last one died with the app. */
+    /**
+     * A row still marked as downloading has no transfer behind it at launch: the last one died with the app.
+     * Whatever it left is thrown away, because the transfer starts from byte zero anyway: the unfinished
+     * file in [PARTIAL_DIR], and the same track's file in the downloads folder itself, where an earlier
+     * version of the app wrote straight to the final name and the player took the half for a whole.
+     */
     private suspend fun resumeInterruptedDownloads() {
         val interrupted =
             songRepository.getDownloadingSongs().lastOrNull().orEmpty() +
                 songRepository.getPreparingSongs().lastOrNull().orEmpty()
+        // Skipping what a caller has already queued: its row says "downloading" too, but its transfer is live.
+        interrupted.filter { it.videoId !in pendingIds }.forEach { song ->
+            val removed =
+                listOf(audioFile(song.videoId), File(getDownloadPath(), "${song.videoId}.mp4"), File(getDownloadPath(), "temp_chunks_${song.videoId}.webm"))
+                    .filter { it.exists() }
+            removed.forEach { it.deleteRecursively() }
+            if (removed.isNotEmpty()) {
+                Logger.i(TAG, "Dropped the unfinished file of ${song.videoId}: ${removed.joinToString { it.name }}")
+            }
+        }
         Logger.i(TAG, "Resuming ${interrupted.size} interrupted downloads")
         interrupted.forEach { enqueue(it.videoId, it.title) }
+    }
+
+    private fun partialDir() = File(getDownloadPath(), PARTIAL_DIR)
+
+    /** Everything a transfer of [videoId] may have left in [PARTIAL_DIR]: the file, the video half and the chunks folder. */
+    private fun deletePartial(videoId: String) {
+        listOf("$videoId.webm", "$videoId.mp4", "temp_chunks_$videoId.webm").forEach { File(partialDir(), it).deleteRecursively() }
+    }
+
+    /** Whole file or nothing: a rename inside one folder, which no reader can see half done. */
+    private fun publish(videoId: String): Boolean {
+        val source = File(partialDir(), "$videoId.webm")
+        if (!source.isFile || source.length() == 0L) return false
+        val target = audioFile(videoId)
+        return try {
+            try {
+                Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (e: AtomicMoveNotSupportedException) {
+                Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            true
+        } catch (e: java.io.IOException) {
+            Logger.e(TAG, "Could not move the finished download of $videoId into place: ${e.message}")
+            false
+        }
     }
 
     override suspend fun downloadTrack(
@@ -149,11 +196,12 @@ internal class DownloadUtils(
         transfers.remove(videoId)
         if (!pendingIds.remove(videoId)) {
             // Removed while it ran.
+            deletePartial(videoId)
             audioFile(videoId).delete()
             return
         }
         val state = if (succeeded) DownloadState.STATE_DOWNLOADED else DownloadState.STATE_NOT_DOWNLOADED
-        if (!succeeded) audioFile(videoId).delete()
+        if (!succeeded) deletePartial(videoId)
         songRepository.updateDownloadState(videoId, state)
         publishDownloadTask(videoId, state)
         onDownloadFinished(videoId, song.title, succeeded)
@@ -161,16 +209,17 @@ internal class DownloadUtils(
 
     /** Each try asks YouTube for the stream anew, which is also what a URL refused outright needs. */
     private suspend fun transfer(song: SongEntity): Boolean {
-        File(getDownloadPath()).mkdirs()
+        partialDir().mkdirs()
         repeat(DOWNLOAD_ATTEMPTS) { attempt ->
             if (attempt > 0) delay(RETRY_DELAY_MS shl (attempt - 1))
+            deletePartial(song.videoId)
             var done = false
             var error: String? = null
             try {
                 songRepository
                     .downloadToFile(
                         song.toTrack(),
-                        path = getDownloadPath() + File.separator + song.videoId,
+                        path = partialDir().path + File.separator + song.videoId,
                         videoId = song.videoId,
                         isVideo = false,
                     ).collect { state ->
@@ -181,7 +230,10 @@ internal class DownloadUtils(
             } catch (e: Exception) {
                 error = e.message ?: e.toString()
             }
-            if (done && error == null) return true
+            if (done && error == null) {
+                if (publish(song.videoId)) return true
+                error = "the finished file is missing or empty"
+            }
             Logger.e(TAG, "Download of ${song.videoId} failed, attempt ${attempt + 1}: $error")
         }
         return false
@@ -209,6 +261,9 @@ internal class DownloadUtils(
 
     // Last of the properties: these coroutines start at once and touch the ones above.
     init {
+        // Nothing is running yet, so whatever lies in here was left by a transfer the last run died in.
+        partialDir().deleteRecursively()
+        File(getDownloadPath()).listFiles { file -> file.isDirectory && file.name.startsWith("temp_chunks_") }?.forEach { it.deleteRecursively() }
         repeat(PARALLEL_DOWNLOADS) {
             coroutineScope.launch {
                 for (song in queue) runDownload(song)
@@ -310,7 +365,7 @@ internal class DownloadUtils(
     override fun removeAllDownloads() {
         val pending = pendingIds.filter(::cancelDownload)
         _downloadTask.value = emptyMap()
-        val files = File(getDownloadPath()).listFiles().orEmpty()
+        val files = File(getDownloadPath()).listFiles().orEmpty().filter { it.name != PARTIAL_DIR }
         files.forEach { it.delete() }
         val videoIds = pending + files.map { it.name.split(".").first().removePrefix(MERGING_DATA_TYPE.VIDEO) }
         coroutineScope.launch {

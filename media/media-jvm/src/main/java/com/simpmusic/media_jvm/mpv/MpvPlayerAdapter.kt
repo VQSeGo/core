@@ -1328,10 +1328,7 @@ class MpvPlayerAdapter(
      * format's own audio URL. No fallback extraction: a waveform is not worth another extraction.
      */
     private suspend fun waveformSourceUrl(videoId: String): String? {
-        File(getDownloadPath())
-            .listFiles()
-            ?.firstOrNull { it.name.contains(videoId) && !it.name.contains(MERGING_DATA_TYPE.VIDEO) && it.length() > 0 }
-            ?.let { return it.absolutePath }
+        downloadedFile(videoId)?.let { return it.absolutePath }
         val audioUrl = streamRepository.getNewFormat(videoId).lastOrNull()?.audioUrl?.takeIf { it.isNotEmpty() } ?: return null
         return audioUrl.takeIf { streamRepository.is403Url(it).firstOrNull() == false }
     }
@@ -3309,6 +3306,13 @@ class MpvPlayerAdapter(
      * `edl://` URL by [buildPlaybackUrl] (mpv's equivalent of VLC's `--input-slave`
      * and Android's MergingMediaSource).
      */
+    /**
+     * The finished download of [videoId]: the file by its exact name. DownloadUtils writes unfinished ones
+     * under `.partial` and renames them here whole, so a file at this path is complete.
+     */
+    private fun downloadedFile(videoId: String): File? =
+        File(getDownloadPath(), "$videoId.webm").takeIf { it.isFile && it.length() > 0 }
+
     private suspend fun extractPlayableUrl(mediaItem: GenericMediaItem): PlayableSource? {
         Logger.w(TAG, "Extracting playable URL for ${mediaItem.mediaId}")
         val shouldFindVideo =
@@ -3317,17 +3321,10 @@ class MpvPlayerAdapter(
         val videoId = mediaItem.mediaId
 
         // Check downloads first
-        val downloadFiles =
-            File(getDownloadPath()).listFiles()?.filter {
-                it.name.contains(videoId)
-            }
-        if (!downloadFiles.isNullOrEmpty()) {
-            val audioFile = downloadFiles.firstOrNull { !it.name.contains(MERGING_DATA_TYPE.VIDEO) }
-            if (audioFile != null && audioFile.length() > 0 && audioFile.exists()) {
-                // mpv accepts absolute file paths directly
-                Logger.i("Offline", "source $videoId download")
-                return PlayableSource(isVideo = false, url = audioFile.absolutePath)
-            }
+        downloadedFile(videoId)?.let { audioFile ->
+            // mpv accepts absolute file paths directly
+            Logger.i("Offline", "source $videoId download")
+            return PlayableSource(isVideo = false, url = audioFile.absolutePath)
         }
 
         // A live broadcast is one HLS playlist carrying audio and video together: there is nothing
