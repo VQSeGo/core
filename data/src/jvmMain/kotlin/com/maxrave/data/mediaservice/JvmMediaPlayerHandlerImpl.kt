@@ -2950,6 +2950,7 @@ class JvmMediaPlayerHandlerImpl(
     }
 
     override fun onPlayerError(error: PlayerError) {
+        Logger.i("Offline", "error ${player.currentMediaItem?.mediaId} ${error.errorCode} ${error.errorCodeName}")
         when (error.errorCode) {
             PlayerConstants.ERROR_CODE_TIMEOUT -> {
                 Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")

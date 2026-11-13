@@ -3325,6 +3325,7 @@ class MpvPlayerAdapter(
             val audioFile = downloadFiles.firstOrNull { !it.name.contains(MERGING_DATA_TYPE.VIDEO) }
             if (audioFile != null && audioFile.length() > 0 && audioFile.exists()) {
                 // mpv accepts absolute file paths directly
+                Logger.i("Offline", "source $videoId download")
                 return PlayableSource(isVideo = false, url = audioFile.absolutePath)
             }
         }
@@ -3351,6 +3352,7 @@ class MpvPlayerAdapter(
                         }
 
                     Logger.w("Stream", "Video from format (with audio stream: ${audioSlave != null})")
+                    Logger.i("Offline", "source $videoId saved-url")
                     return PlayableSource(
                         isVideo = true,
                         url = videoUrl,
@@ -3361,6 +3363,7 @@ class MpvPlayerAdapter(
                 val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
                 if (!is403Url) {
                     Logger.w("Stream", "Audio from format")
+                    Logger.i("Offline", "source $videoId saved-url")
                     return PlayableSource(isVideo = false, url = audioUrl)
                 }
             }
@@ -3406,6 +3409,7 @@ class MpvPlayerAdapter(
                             isVideo = false,
                         ).lastOrNull()
                 Logger.d(TAG, "Stream Video $videoUrl (with audio stream: ${audioUrl != null})")
+                Logger.i("Offline", "source $videoId fresh-url")
                 return PlayableSource(
                     isVideo = true,
                     url = videoUrl,
@@ -3423,11 +3427,13 @@ class MpvPlayerAdapter(
                     ).lastOrNull()
             if (audioUrl != null) {
                 Logger.d(TAG, "Stream Audio $audioUrl")
+                Logger.i("Offline", "source $videoId fresh-url")
                 // getStream above is also where a live broadcast is first recognised.
                 return PlayableSource(isVideo = false, url = audioUrl, isLive = LiveStreamRegistry.isLive(videoId))
             }
         }
 
+        Logger.i("Offline", "source $videoId none")
         return null
     }
 

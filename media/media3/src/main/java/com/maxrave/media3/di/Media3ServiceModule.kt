@@ -290,6 +290,7 @@ private fun provideResolvingDataSourceFactory(
                 }
             }
             Logger.d("Stream", "Downloaded $mediaId")
+            Logger.i("Offline", "source $mediaId download pos=${dataSpec.position}")
             return@Factory dataSpec.subrange(dataSpec.uriPositionOffset, chunkLength)
         }
         if (playerCache.isFullyCached(mediaId, dataSpec.position)) {
@@ -306,6 +307,7 @@ private fun provideResolvingDataSourceFactory(
                 }
             }
             Logger.d("Stream", "Cached $mediaId")
+            Logger.i("Offline", "source $mediaId cache pos=${dataSpec.position}")
             // Every byte is on disk right now, so CacheDataSource can serve this chunk
             // without ever reaching upstream, and the bare media id is safe as the URI.
             //
@@ -335,6 +337,7 @@ private fun provideResolvingDataSourceFactory(
                         val is403Url = streamRepository.is403Url(videoUrl).firstOrNull() != false
                         Logger.d("Stream", "is 403 $is403Url")
                         if (!is403Url) {
+                            Logger.i("Offline", "source $mediaId saved-url pos=${dataSpec.position}")
                             dataSpecReturn = dataSpec.withUri(videoUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
                             resolved = true
                             return@runBlocking
@@ -351,6 +354,7 @@ private fun provideResolvingDataSourceFactory(
                     ?.let {
                         Logger.d("Stream", it)
                         Logger.d("Stream", "Video")
+                        Logger.i("Offline", "source $mediaId fresh-url pos=${dataSpec.position}")
                         dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
                         resolved = true
                     }
@@ -363,6 +367,7 @@ private fun provideResolvingDataSourceFactory(
                         val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
                         Logger.d("Stream", "is 403 $is403Url")
                         if (!is403Url) {
+                            Logger.i("Offline", "source $mediaId saved-url pos=${dataSpec.position}")
                             dataSpecReturn = dataSpec.withUri(audioUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
                             resolved = true
                             return@runBlocking
@@ -379,6 +384,7 @@ private fun provideResolvingDataSourceFactory(
                     ?.let {
                         Logger.d("Stream", it)
                         Logger.d("Stream", "Audio")
+                        Logger.i("Offline", "source $mediaId fresh-url pos=${dataSpec.position}")
                         dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
                         resolved = true
                     }
@@ -389,6 +395,7 @@ private fun provideResolvingDataSourceFactory(
         if (LiveStreamRegistry.isLive(videoId)) throw LiveStreamDetectedException(videoId)
         if (!resolved) {
             Logger.e("Stream", "Failed to resolve stream URL for $mediaId")
+            Logger.i("Offline", "source $mediaId none pos=${dataSpec.position}")
             throw java.io.IOException("Failed to resolve stream URL for $mediaId")
         }
         return@Factory dataSpecReturn
