@@ -4,7 +4,10 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * Apple Music's animated artist artwork, cached per YouTube channel.
+ * Unused: nothing reads or writes the `artist_motion` table any more (the animated artist artwork
+ * was removed). The entity stays so the Room schema does not change; rows left in it are inert.
+ *
+ * Formerly Apple Music's animated artist artwork, cached per YouTube channel.
  *
  * A row means "this artist has been asked about", **not** "this artist has a video": AM carries
  * motion for roughly three artists in five, so without a negative cache the two requests behind it

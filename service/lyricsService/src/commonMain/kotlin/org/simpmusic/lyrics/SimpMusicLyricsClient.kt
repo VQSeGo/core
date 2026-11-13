@@ -3,11 +3,6 @@ package org.simpmusic.lyrics
 import com.maxrave.logger.Logger
 import io.ktor.client.call.body
 import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsText
-import org.simpmusic.lyrics.am.parseAMHlsVariants
-import org.simpmusic.lyrics.am.pickAMRendition
-import org.simpmusic.lyrics.am.AMArtistResource
-import org.simpmusic.lyrics.am.AMSearchResponse
 import org.simpmusic.lyrics.models.response.BaseResponse
 import org.simpmusic.lyrics.models.response.BetterLyricsResponse
 import org.simpmusic.lyrics.models.response.LrclibObject
@@ -90,66 +85,6 @@ class SimpMusicLyricsClient {
                 ).body<BetterLyricsResponse>()
         rs.ttml
     }
-
-    suspend fun searchAMArtist(
-        name: String,
-        limit: Int = 5,
-    ): Result<List<AMArtistResource>> =
-        runCatching {
-            val response = lyricsService.searchAMArtist(name, limit)
-            if (response.status.value !in 200..299) {
-                throw Exception("AM search failed: ${response.status.value}")
-            }
-            val parsed = response.body<AMSearchResponse>()
-            val resources = parsed.resources?.artists.orEmpty()
-            // Keep the search ranking from results.data; fall back to the resources map order.
-            parsed.results
-                ?.artists
-                ?.data
-                ?.mapNotNull { resources[it.id] }
-                ?: resources.values.toList()
-        }
-
-    /**
-     * Fetch a single artist by id, including [AMEditorialArtwork] (name-logo PNG) and keyColor.
-     * Returns null when the id is not present in the response.
-     */
-    suspend fun getAMArtist(id: String): Result<AMArtistResource?> =
-        runCatching {
-            val response = lyricsService.getAMArtist(id)
-            if (response.status.value !in 200..299) {
-                throw Exception("AM artist fetch failed: ${response.status.value}")
-            }
-            response
-                .body<AMSearchResponse>()
-                .resources
-                ?.artists
-                ?.get(id)
-        }
-
-    /**
-     * Resolve an animated-artwork master playlist down to the single rendition worth playing, and
-     * return its media-playlist url.
-     *
-     * Doing this here rather than leaving it to the player is what makes the two platforms agree:
-     * mpv defaults to `--hls-bitrate=max` and would take the top of the ladder — on a measured
-     * artwork that is 2048x2732 10-bit HEVC at 20 Mbps, 52 MB for a 22-second loop — while
-     * ExoPlayer would pick by its own bandwidth estimate. Handing both a chosen rendition removes
-     * the question. Returns null when the url is not a master playlist.
-     */
-    suspend fun selectAMRendition(
-        masterUrl: String,
-        minWidth: Int,
-    ): Result<String?> =
-        runCatching {
-            val response = lyricsService.fetchAMHlsPlaylist(masterUrl)
-            if (response.status.value !in 200..299) {
-                throw Exception("AM playlist fetch failed: ${response.status.value}")
-            }
-            parseAMHlsVariants(response.bodyAsText(), masterUrl)
-                .pickAMRendition(minWidth)
-                ?.uri
-        }
 
     private suspend inline fun <reified T> HttpResponse.bodyOrThrow(): T {
         if (this.status.value == 429) {

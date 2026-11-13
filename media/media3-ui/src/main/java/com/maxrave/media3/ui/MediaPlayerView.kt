@@ -31,28 +31,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
-import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.compose.PlayerSurface
 import androidx.media3.ui.compose.SURFACE_TYPE_SURFACE_VIEW
-import androidx.media3.ui.compose.modifiers.resizeWithContentScale
 import androidx.media3.ui.compose.state.rememberPresentationState
 import coil3.compose.AsyncImage
 import coil3.request.CachePolicy
@@ -60,7 +52,6 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.data.model.streams.TimeLine
-import com.maxrave.domain.data.model.ui.ScreenSizeInfo
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
 import com.maxrave.domain.mediaservice.handler.currentLyricsOffsetMs
 import com.maxrave.domain.repository.SongRepository
@@ -68,142 +59,8 @@ import com.maxrave.logger.Logger
 import com.maxrave.media3.ui.extension.KeepScreenOn
 import org.koin.compose.koinInject
 import org.koin.core.qualifier.named
-import kotlin.math.roundToInt
 
 private val RICH_SYNC_TIMESTAMP_REGEX = Regex("""<\d{2}:\d{2}\.\d{2,3}>\s*""")
-
-@androidx.annotation.OptIn(UnstableApi::class)
-@Composable
-fun MediaPlayerView(
-    modifier: Modifier = Modifier,
-    context: Context,
-    density: Density,
-    url: String,
-    screenSize: ScreenSizeInfo,
-    cropToBounds: Boolean = false,
-    onFirstFrame: () -> Unit = {},
-) {
-    var widthPx by rememberSaveable {
-        mutableIntStateOf(screenSize.wPX)
-    }
-
-    var keepScreenOn by rememberSaveable {
-        mutableStateOf(false)
-    }
-
-    val playerListener =
-        remember {
-            object : Player.Listener {
-                override fun onVideoSizeChanged(videoSize: VideoSize) {
-                    super.onVideoSizeChanged(videoSize)
-                    Logger.w("MediaPlayerView", "Video size changed: ${videoSize.width} / ${videoSize.height}")
-                    if (videoSize.width != 0 && videoSize.height != 0) {
-                        val h = (videoSize.width.toFloat() / videoSize.height) * screenSize.hPX
-                        Logger.w("MediaPlayerView", "Calculated width: $h")
-                        widthPx = h.roundToInt()
-                    }
-                }
-
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    super.onIsPlayingChanged(isPlaying)
-                    keepScreenOn = isPlaying
-                }
-            }
-        }
-
-    // Initialize ExoPlayer
-    val exoPlayer =
-        remember {
-            val upstreamFactory = DefaultDataSource.Factory(context, DefaultHttpDataSource.Factory())
-            ExoPlayer
-                .Builder(context)
-                .setLoadControl(
-                    DefaultLoadControl
-                        .Builder()
-                        .setPrioritizeTimeOverSizeThresholds(false)
-                        .build(),
-                ).setMediaSourceFactory(
-                    DefaultMediaSourceFactory(upstreamFactory),
-                ).build()
-                .apply {
-                    addListener(playerListener)
-                    videoScalingMode = C.VIDEO_SCALING_MODE_DEFAULT
-                }
-        }
-
-    // Create a MediaSource
-    val mediaSource =
-        remember(url) {
-            MediaItem.fromUri(url)
-        }
-
-    // Set MediaSource to ExoPlayer
-    LaunchedEffect(mediaSource) {
-        exoPlayer.setMediaItem(mediaSource)
-        exoPlayer.prepare()
-        exoPlayer.play()
-        exoPlayer.repeatMode = Player.REPEAT_MODE_ONE
-    }
-
-    // Manage lifecycle events
-    DisposableEffect(Unit) {
-        onDispose {
-            exoPlayer.removeListener(playerListener)
-            exoPlayer.release()
-        }
-    }
-
-    if (keepScreenOn) {
-        KeepScreenOn()
-    }
-
-    val presentationState = rememberPresentationState(exoPlayer)
-    // Media3 lifts coverSurface on EVENT_RENDERED_FIRST_FRAME: the moment the shutter below goes.
-    val currentOnFirstFrame by rememberUpdatedState(onFirstFrame)
-    LaunchedEffect(presentationState.coverSurface) {
-        if (!presentationState.coverSurface) currentOnFirstFrame()
-    }
-    if (cropToBounds) {
-        // Center scale-to-cover (ContentScale.Crop) into whatever frame the caller gives us.
-        // resizeWithContentScale keeps the true video aspect ratio (no stretch), scales it
-        // to fully cover the frame using the real videoSizeDp, then clips the overflow.
-        Box(modifier = modifier.graphicsLayer { clip = true }) {
-            PlayerSurface(
-                player = exoPlayer,
-                surfaceType = SURFACE_TYPE_SURFACE_VIEW,
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .resizeWithContentScale(
-                            contentScale = ContentScale.Crop,
-                            sourceSizeDp = presentationState.videoSizeDp,
-                        ),
-            )
-
-            if (presentationState.coverSurface) {
-                // Cover the surface that is being prepared with a shutter
-                Box(Modifier.matchParentSize().background(Color.Black))
-            }
-        }
-    } else {
-        Box(modifier = modifier.graphicsLayer { clip = true }) {
-            PlayerSurface(
-                player = exoPlayer,
-                surfaceType = SURFACE_TYPE_SURFACE_VIEW,
-                modifier =
-                    Modifier
-                        .fillMaxHeight()
-                        .width(with(density) { widthPx.toDp() })
-                        .align(Alignment.Center),
-            )
-
-            if (presentationState.coverSurface) {
-                // Cover the surface that is being prepared with a shutter
-                Box(Modifier.background(Color.Black))
-            }
-        }
-    }
-}
 
 /**
  * Aspect ratio (width / height) of the video [playerName] is showing, or null while it has no

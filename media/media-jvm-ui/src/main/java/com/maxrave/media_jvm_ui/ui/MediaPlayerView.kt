@@ -12,14 +12,12 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.Image
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -41,7 +39,6 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.data.model.streams.TimeLine
-import com.maxrave.domain.data.player.AppOnScreen
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
 import com.maxrave.domain.mediaservice.handler.currentLyricsOffsetMs
 import com.maxrave.domain.repository.SongRepository
@@ -49,76 +46,8 @@ import com.simpmusic.media_jvm.mpv.MpvPlayer
 import com.simpmusic.media_jvm.mpv.MpvPlayerAdapter
 import com.simpmusic.media_jvm.mpv.MpvVideoFrameSource
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
-
-@Composable
-fun MediaPlayerViewWithUrl(
-    url: String,
-    modifier: Modifier,
-    cropToBounds: Boolean = false,
-    onFirstFrame: () -> Unit = {},
-) {
-    val scope = rememberCoroutineScope()
-    var frameSource by remember { mutableStateOf<MpvVideoFrameSource?>(null) }
-    var mpvPlayer by remember { mutableStateOf<MpvPlayer?>(null) }
-
-    DisposableEffect(url) {
-        // Creating the handle no longer touches Swing (the render target is a plain frame
-        // flow), so the blocking mpv_create/mpv_initialize pair runs on IO instead of the EDT.
-        scope.launch(Dispatchers.IO) {
-            // audioOnly = false attaches the software render context before the first loadfile,
-            // which render.h requires. Returns null when libmpv is missing; the Box below then
-            // simply renders nothing, and MpvPlayer.create() has already logged why.
-            val player = MpvPlayer.create(audioOnly = false)
-            if (player != null) {
-                mpvPlayer = player
-                // mpv loops natively, so no end-of-file listener is needed.
-                player.setLooping(true)
-                frameSource = player.videoFrames
-                player.loadFile(url, startPaused = !AppOnScreen.onScreen.value)
-            }
-        }
-        onDispose {
-            mpvPlayer?.release()
-            frameSource = null
-            mpvPlayer = null
-        }
-    }
-
-    // Kept out of the DisposableEffect above so flipping the flag re-scales the running video
-    // instead of tearing down and re-creating the mpv handle.
-    LaunchedEffect(mpvPlayer, cropToBounds) {
-        mpvPlayer?.setPanscan(if (cropToBounds) 1.0 else 0.0)
-    }
-
-    // No window on screen: pause the loop instead of decoding frames nobody sees. A muted loop has no
-    // audio, so MpvPlayer.setVideoSuspended would leave mpv nothing to play and it would end the file.
-    LaunchedEffect(mpvPlayer) {
-        val player = mpvPlayer ?: return@LaunchedEffect
-        AppOnScreen.onScreen.collect { onScreen -> if (onScreen) player.play() else player.pause() }
-    }
-
-    Box(
-        modifier
-            .then(
-                Modifier
-                    .graphicsLayer { clip = true },
-            ),
-    ) {
-        frameSource?.let { source ->
-            MpvVideoFrames(
-                source = source,
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .align(Alignment.Center),
-                onFirstFrame = onFirstFrame,
-            )
-        }
-    }
-}
 
 /**
  * Draws the frames published by an [MpvVideoFrameSource] as a plain Compose [Image].
@@ -130,9 +59,8 @@ fun MediaPlayerViewWithUrl(
  * participates in normal Compose rendering, and any number of screens can collect the same
  * source at once.
  *
- * The box reports its size to the source, so mpv scales frames to exactly this box — letterboxing
- * them by default, or cropping them to cover it when the caller asked for that (see
- * `MpvPlayer.setPanscan`). Either way the fit is decided before Compose sees the pixels, so
+ * The box reports its size to the source, so mpv scales frames to exactly this box, letterboxing
+ * them. The fit is decided before Compose sees the pixels, so
  * [ContentScale.Fit] only matters in the moment after a resize while the next correctly-sized
  * frame is still being rendered.
  */

@@ -744,26 +744,13 @@ class MpvPlayer private constructor(
     }
 
     /**
-     * How much of the video may be cropped to fill the render target, 0.0 (letterbox, mpv's
-     * default) to 1.0 (cover it completely).
-     *
-     * This has to be mpv's job rather than the caller's: mpv scales and letterboxes each frame
-     * into the size reported through the render context, so by the time a frame reaches Compose
-     * the black bars are already part of the pixels and no `ContentScale` can remove them.
-     */
-    fun setPanscan(value: Double) {
-        if (isReleased) return
-        setPropertyDouble("panscan", value.coerceIn(0.0, 1.0))
-    }
-
-    /**
      * Stop or resume decoding this handle's video while no window can show it. `vid=no` drops the
      * video track outright — no decoding, no software render — while the audio plays on, and `auto`
      * selects it again. Simply not rendering frames would not work: vo_libmpv waits up to 200 ms
      * for each frame to be rendered (`flip_page`), which stalls video playback instead of idling it.
      *
-     * Only for handles that also carry audio. A video-only handle (a muted loop) left with no track
-     * would have nothing to play and end the file — pause those instead.
+     * Only for handles that also carry audio. A video-only handle left with no track would have nothing to play
+     * and end the file — pause those instead.
      */
     fun setVideoSuspended(suspended: Boolean) {
         if (isReleased || videoFrames == null) return
@@ -1087,19 +1074,6 @@ class MpvPlayer private constructor(
         // equalizer down with it at the end of every transition.
         crossfadeEntries = emptyList()
         applyAudioFilters()
-    }
-
-    /**
-     * Repeat the current file indefinitely.
-     *
-     * mpv's `loop-file` property (v0.37.0 options.rst: `--loop-file=<N|inf|no>`, *"inf means
-     * forever"*). Preferred over re-issuing `loadfile` when end-of-file arrives — the VLC-era
-     * approach — because looping natively replays from the demuxer cache instead of refetching
-     * the whole URL on every repeat.
-     */
-    fun setLooping(loop: Boolean) {
-        if (isReleased) return
-        setPropertyString("loop-file", if (loop) "inf" else "no")
     }
 
     /** @param timeMs milliseconds, matching `VlcPlayer.seekTo`. mpv's `time-pos` is seconds. */

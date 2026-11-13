@@ -9,7 +9,6 @@ import androidx.room.Transaction
 import androidx.room.Update
 import com.maxrave.domain.data.entities.AlbumEntity
 import com.maxrave.domain.data.entities.ArtistEntity
-import com.maxrave.domain.data.entities.ArtistMotionEntity
 import com.maxrave.domain.data.entities.AutoEqCurveEntity
 import com.maxrave.domain.data.entities.AutoEqEntryEntity
 import com.maxrave.domain.data.entities.AutoEqIndexMetaEntity
@@ -509,24 +508,6 @@ interface DatabaseDao {
         channelId: String,
         thumbnails: String,
     )
-
-    @Query("UPDATE artist SET nameLogoUrl = :nameLogoUrl, nameLogoColor = :nameLogoColor WHERE channelId = :channelId")
-    suspend fun updateArtistNameLogo(
-        channelId: String,
-        nameLogoUrl: String?,
-        nameLogoColor: String?,
-    )
-
-    /**
-     * A row here means the artist has been *asked about*, not that they have a video — all four
-     * urls are null for the roughly two artists in five that Apple Music carries no motion for.
-     * Without that, the two requests behind it would run again on every visit to their page.
-     */
-    @Query("SELECT * FROM artist_motion WHERE channelId = :channelId")
-    suspend fun getArtistMotion(channelId: String): ArtistMotionEntity?
-
-    @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
-    suspend fun upsertArtistMotion(motion: ArtistMotionEntity)
 
     @Query("UPDATE artist SET followed = :followed, followedAt = :followedAt WHERE channelId = :channelId")
     suspend fun updateFollowed(
@@ -1206,9 +1187,8 @@ interface DatabaseDao {
      *
      * `song` carries its own `artistName`/`artistId`, so no track loses the name it displays, and the
      * artist page refetches everything it shows anyway — except that the artist a kept song belongs
-     * to is spared regardless. Deleting one takes `nameLogoUrl`/`nameLogoColor` with it, which
-     * `updateArtistNameLogo` builds once and no refetch reproduces, and it leaves the page of a song
-     * still in the library with nothing at all to draw offline.
+     * to is spared regardless. Deleting one leaves the page of a song still in the library with
+     * nothing at all to draw offline.
      *
      * `song.artistId` is a converted `List<String>`, stored as a JSON array, so the channel id is
      * matched as a quoted token the same way the `tracks` columns are — with the `replace()` +
@@ -1235,18 +1215,6 @@ interface DatabaseDao {
      */
     @Query("DELETE FROM notification WHERE type = 'artist' AND channelId NOT IN (SELECT channelId FROM artist WHERE followed = 1)")
     suspend fun deleteNotificationsOfUnfollowedArtists(): Int
-
-    /**
-     * Cached Apple Music motion for an artist whose row the sweep has just removed.
-     *
-     * Keyed on the artist row rather than on the follow, unlike the two statements above: a motion
-     * row costs a few hundred bytes and is only ever read by that artist's page, so an artist kept
-     * because a liked or downloaded song credits them keeps their animated header too. Run AFTER
-     * [deleteUnfollowedArtists], or it measures against rows that are about to disappear.
-     * `artist.channelId` is NOT NULL, so the subquery cannot smuggle a NULL into the NOT IN.
-     */
-    @Query("DELETE FROM artist_motion WHERE channelId NOT IN (SELECT channelId FROM artist)")
-    suspend fun deleteOrphanedArtistMotion(): Int
 
     /** The new-releases tracking row for an artist the user no longer follows. See [deleteNotificationsOfUnfollowedArtists]. */
     @Query("DELETE FROM followed_artist_single_and_album WHERE channelId NOT IN (SELECT channelId FROM artist WHERE followed = 1)")

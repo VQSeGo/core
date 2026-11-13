@@ -18,11 +18,9 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.headers
 import io.ktor.client.request.parameter
-import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
-import org.simpmusic.lyrics.am.AMTokenManager
 
 class SimpMusicLyrics {
     private var httpClient = createClient()
@@ -34,8 +32,6 @@ class SimpMusicLyrics {
         }
 
     private val baseUrl = "https://api-lyrics.simpmusic.org/v1/"
-
-    private val amTokenManager = AMTokenManager()
 
     private fun createClient() =
         HttpClient(getEngine()) {
@@ -85,19 +81,6 @@ class SimpMusicLyrics {
         }
     }
 
-    private fun HttpRequestBuilder.buildAMHeaders(token: String) {
-        headers {
-            header("Authorization", "Bearer $token")
-            header("Origin", "https://music.apple.com")
-            header("Referer", "https://music.apple.com/")
-            header(
-                HttpHeaders.UserAgent,
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0",
-            )
-            header(HttpHeaders.Accept, "application/json")
-        }
-    }
-
     suspend fun findLyricsByVideoId(videoId: String) =
         httpClient.get(baseUrl + videoId) {
             buildDefaultHeaders()
@@ -130,65 +113,4 @@ class SimpMusicLyrics {
             parameter("d", it)
         }
     }
-
-    suspend fun searchAMArtist(
-        name: String,
-        limit: Int,
-    ): HttpResponse {
-        val response = requestAMSearch(name, limit, amTokenManager.getToken(httpClient))
-        // Expired bearer -> refresh the token once and retry on a fresh request.
-        if (response.status.value == 401) {
-            amTokenManager.clearToken()
-            return requestAMSearch(name, limit, amTokenManager.getToken(httpClient))
-        }
-        return response
-    }
-
-    private suspend fun requestAMSearch(
-        name: String,
-        limit: Int,
-        token: String,
-    ) = httpClient.get("https://amp-api-edge.music.apple.com/v1/catalog/us/search") {
-        parameter("term", name)
-        parameter("types", "artists")
-        parameter("fields[artists]", "url,name,artwork")
-        parameter("art[url]", "f")
-        parameter("format[resources]", "map")
-        parameter("extend", "artistUrl")
-        parameter("l", "en-US")
-        parameter("limit", limit)
-        parameter("platform", "web")
-        buildAMHeaders(token)
-    }
-
-    suspend fun getAMArtist(id: String): HttpResponse {
-        val response = requestAMArtist(id, amTokenManager.getToken(httpClient))
-        // Expired bearer -> refresh the token once and retry on a fresh request.
-        if (response.status.value == 401) {
-            amTokenManager.clearToken()
-            return requestAMArtist(id, amTokenManager.getToken(httpClient))
-        }
-        return response
-    }
-
-    private suspend fun requestAMArtist(
-        id: String,
-        token: String,
-    ) = httpClient.get("https://amp-api.music.apple.com/v1/catalog/us/artists/$id") {
-        parameter("art[url]", "c,f")
-        // editorialVideo is what brings the animated artist artwork back. Without it named here
-        // the field is simply absent from the response — the request still succeeds.
-        parameter("extend", "editorialArtwork,editorialVideo,hero,keyColor")
-        parameter("format[resources]", "map")
-        parameter("l", "en-US")
-        parameter("platform", "web")
-        buildAMHeaders(token)
-    }
-
-    /**
-     * Fetch an animated-artwork playlist off Apple's media CDN. Deliberately without the AM headers:
-     * this host takes no bearer, serves no DRM and needs no origin — sending them only invites the
-     * edge to treat the request as something it is not.
-     */
-    suspend fun fetchAMHlsPlaylist(url: String): HttpResponse = httpClient.get(url)
 }

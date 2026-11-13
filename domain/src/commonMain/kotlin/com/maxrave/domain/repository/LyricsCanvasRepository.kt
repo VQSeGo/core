@@ -3,7 +3,6 @@ package com.maxrave.domain.repository
 import com.maxrave.domain.data.entities.LyricsEntity
 import com.maxrave.domain.data.entities.TranslatedLyricsEntity
 import com.maxrave.domain.data.model.browse.album.Track
-import com.maxrave.domain.data.model.browse.artist.ArtistEditorial
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.utils.Resource
@@ -48,15 +47,6 @@ interface LyricsCanvasRepository {
         track: String,
         duration: Int?,
     ): Flow<Resource<Lyrics>>
-
-    /**
-     * Fetch everything the hidden catalog holds for an artist: the name-logo image with its
-     * dominant color, and the animated artist artwork.
-     *
-     * One call, because both ride the same response — splitting them would double a pair of
-     * requests against an API that is not ours. Either half may be null on a success.
-     */
-    fun getArtistEditorial(artistName: String): Flow<Resource<ArtistEditorial>>
 
     fun getSimpMusicLyrics(videoId: String): Flow<Resource<Lyrics>>
 

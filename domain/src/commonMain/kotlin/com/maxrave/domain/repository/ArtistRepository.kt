@@ -1,7 +1,6 @@
 package com.maxrave.domain.repository
 
 import com.maxrave.domain.data.entities.ArtistEntity
-import com.maxrave.domain.data.entities.ArtistMotionEntity
 import com.maxrave.domain.data.model.browse.artist.ArtistBrowse
 import com.maxrave.domain.utils.Resource
 import kotlinx.coroutines.flow.Flow
@@ -18,21 +17,6 @@ interface ArtistRepository {
         channelId: String,
         thumbnail: String,
     )
-
-    suspend fun updateArtistNameLogo(
-        channelId: String,
-        nameLogoUrl: String?,
-        nameLogoColor: String?,
-    )
-
-    /**
-     * The cached Apple Music animated artwork for this artist, or null when it has never been
-     * looked up. A row whose urls are all null means "looked up, has none" — see
-     * [com.maxrave.domain.data.entities.ArtistMotionEntity].
-     */
-    suspend fun getArtistMotion(channelId: String): ArtistMotionEntity?
-
-    suspend fun upsertArtistMotion(motion: ArtistMotionEntity)
 
     /**
      * Follows or unfollows on the YouTube account; the local flag is a copy of that, see
