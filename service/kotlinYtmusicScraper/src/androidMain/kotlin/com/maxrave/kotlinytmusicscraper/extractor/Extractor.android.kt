@@ -60,8 +60,10 @@ actual class Extractor {
         if (braveFirst) {
             val early = timedStage(videoId, "brave-first") { braveStreams(videoId) }
             if (early.isNotEmpty() && early.headCheckRandomStream()) return early
+            // Only this track falls back: one refused URL (seen on a single video itag while the
+            // rest of BravePipe's answers kept passing) is no reason to pay for the PipePipe tiers
+            // on every track after it. The window still runs out on its own.
             Logger.i("Offline", "resolve $videoId brave-first rejected, back to PipePipe")
-            braveFirstUntil = 0L
         }
 
         // Tier 1 — ciphers solved locally.
