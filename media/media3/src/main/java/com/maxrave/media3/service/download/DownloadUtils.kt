@@ -10,11 +10,15 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.dash.manifest.DashManifestParser
+import androidx.media3.exoplayer.offline.DefaultDownloadIndex
+import androidx.media3.exoplayer.offline.DefaultDownloaderFactory
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadNotificationHelper
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
+import androidx.media3.exoplayer.offline.Downloader
+import androidx.media3.exoplayer.offline.DownloaderFactory
 import coil3.ImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -184,10 +188,10 @@ internal class DownloadUtils(
         }
     /**
      * The URL [url] for [dataSpec], checked against what is already on disk for [key] (see
-     * StreamSpliceGuard). The DownloadManager reading this has sized its work from downloadCache
-     * before this runs, so stale bytes there cannot just be dropped and read on: they are dropped
-     * and this attempt fails, and DownloadManager's retry starts the file over from byte zero.
-     * Stale playerCache bytes belong to playback and are only read around.
+     * StreamSpliceGuard). The CacheWriter reading this has already stepped over the bytes it found
+     * in downloadCache, so stale bytes there cannot just be dropped and read on: they are dropped
+     * and [SpliceRestart] ends this attempt, and [RestartingDownloader] starts the file over from
+     * byte zero. Stale playerCache bytes belong to playback and are only read around.
      */
     private fun guarded(
         dataSpec: DataSpec,
@@ -203,7 +207,7 @@ internal class DownloadUtils(
         if (downloadCache.isStaleFor(key, fresh)) {
             downloadCache.logSpliceGuard(key, fresh, "download (restart)")
             downloadCache.dropStale(key)
-            throw java.io.IOException("Download of $key restarts: the bytes on disk came from another stream variant")
+            throw SpliceRestart(key)
         }
         downloadCache.recordStreamLength(key, fresh)
         if (playerCache.isStaleFor(key, fresh)) {
@@ -221,10 +225,16 @@ internal class DownloadUtils(
     val downloadManager: DownloadManager =
         DownloadManager(
             context,
-            databaseProvider,
-            downloadCache,
-            dataSourceFactory,
-            Executor(Runnable::run),
+            DefaultDownloadIndex(databaseProvider),
+            RestartingDownloaderFactory(
+                DefaultDownloaderFactory(
+                    CacheDataSource
+                        .Factory()
+                        .setCache(downloadCache)
+                        .setUpstreamDataSourceFactory(dataSourceFactory),
+                    Executor(Runnable::run),
+                ),
+            ),
         ).apply {
             maxParallelDownloads = 20
             minRetryCount = 3
@@ -555,4 +565,52 @@ internal class DownloadUtils(
             },
         )
     }
+}
+
+/** Thrown by the download resolver after it dropped a download's bytes of another stream variant. */
+private class SpliceRestart(
+    key: String,
+) : java.io.IOException("Download of $key restarts: the bytes on disk came from another stream variant")
+
+/**
+ * Starts a download over with a fresh downloader after [SpliceRestart]. DownloadManager's own retry
+ * would not do: it calls the same ProgressiveDownloader again, whose CacheWriter keeps the position
+ * it reached by stepping over the bytes since dropped, and would save the rest of the file without
+ * its beginning (and call that complete). A new downloader sizes its work from the cache anew.
+ */
+@UnstableApi
+private class RestartingDownloaderFactory(
+    private val delegate: DownloaderFactory,
+) : DownloaderFactory {
+    override fun createDownloader(request: DownloadRequest): Downloader = RestartingDownloader { delegate.createDownloader(request) }
+}
+
+@UnstableApi
+private class RestartingDownloader(
+    private val create: () -> Downloader,
+) : Downloader {
+    @Volatile private var current: Downloader = create()
+
+    @Volatile private var canceled = false
+
+    override fun download(progressListener: Downloader.ProgressListener?) {
+        // Once is enough: the file restarts from byte zero, which leaves nothing stale behind. A
+        // second restart would mean the stream changed variant between two resolves, and then the
+        // normal failure and retry are the honest answer.
+        try {
+            current.download(progressListener)
+        } catch (e: SpliceRestart) {
+            if (canceled) throw e
+            current = create()
+            if (canceled) throw e
+            current.download(progressListener)
+        }
+    }
+
+    override fun cancel() {
+        canceled = true
+        current.cancel()
+    }
+
+    override fun remove() = current.remove()
 }
