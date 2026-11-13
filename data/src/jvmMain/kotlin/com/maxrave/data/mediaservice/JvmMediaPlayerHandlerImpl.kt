@@ -15,7 +15,6 @@ import com.maxrave.common.LOCAL_PLAYLIST_ID_SAVED_QUEUE
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.common.TITLE
 import com.maxrave.data.db.Converters
-import com.maxrave.data.lastfm.LastfmScrobbler
 import com.maxrave.data.mediaservice.mac.MacOSMediaIntegration
 import com.maxrave.data.mediaservice.mac.MacOSRemoteCommandListener
 import com.maxrave.data.mediaservice.mac.NowPlayingInfo
@@ -126,8 +125,8 @@ private const val SMOOTH_SNAP_MS = 1_000L
 
 // Position tick while no window is on screen (AppOnScreen). Nothing draws the position then, and a
 // minimized window still renders on Windows and Linux, so 50 ms ticks were 20 frames a second of
-// it. A second still serves what reads the ticks off screen: the watch-time pings, the 5 s position
-// save and the scrobbler.
+// it. A second still serves what reads the ticks off screen: the watch-time pings and the 5 s position
+// save.
 private const val OFF_SCREEN_TICK_MS = 1_000L
 
 class JvmMediaPlayerHandlerImpl(
@@ -150,7 +149,7 @@ class JvmMediaPlayerHandlerImpl(
     // what mpv#15253 tells client authors to do.
     //
     // Only what is PUBLISHED is smoothed. Everything that reads the player to decide something —
-    // the crossfade trigger, the sleep timer, the position persist, the scrobbler — still sees
+    // the crossfade trigger, the sleep timer, the position persist — still sees
     // mpv's own number.
     private var smoothAnchorMs = -1L
     private var smoothAnchorAtNanos = 0L
@@ -237,12 +236,6 @@ class JvmMediaPlayerHandlerImpl(
     @Volatile
     private var discordRPC: RichPresenceClient? = null
 
-    /**
-     * Built here rather than injected: it needs nothing this handler does not already hold, and
-     * threading it through [createMediaServiceHandler] would mean changing that expect signature
-     * and all three actuals for one dependency.
-     */
-    private val lastfmScrobbler = LastfmScrobbler(dataStoreManager)
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
     override var pushPlayerError: (PlayerError) -> Unit = {}
@@ -773,9 +766,6 @@ class JvmMediaPlayerHandlerImpl(
                             }
                         }
                     updateDiscordRpc(song)
-                    // Launched separately: "now playing" is a network round trip, and this job
-                    // still has the rest of the track state to publish.
-                    coroutineScope.launch { lastfmScrobbler.onTrackStarted(song) }
                     nypc?.setNowPlaying(
                         song.title,
                         song.artistName?.joinToString(", ") ?: "",
@@ -993,10 +983,6 @@ class JvmMediaPlayerHandlerImpl(
                     if (sinceLastPositionSaveMs >= positionPersistIntervalMs) {
                         sinceLastPositionSaveMs = 0
                         mayBeSaveRecentPosition()
-                        // Riding the existing 5s tick instead of adding one: the scrobble point is
-                        // half the track or four minutes, so five seconds of granularity is plenty
-                        // and the 100ms loop stays as cheap as it was.
-                        lastfmScrobbler.onProgress(player.currentPosition)
                     }
                 }
             }

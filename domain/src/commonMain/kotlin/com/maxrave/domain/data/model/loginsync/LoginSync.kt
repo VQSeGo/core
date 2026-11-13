@@ -10,7 +10,6 @@ enum class LoginSyncService(
 ) {
     YOUTUBE("YouTube Music"),
     SPOTIFY("Spotify"),
-    LASTFM("Last.fm"),
 }
 
 /** The computer the phone is about to trust, as the computer names itself. */

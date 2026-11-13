@@ -20,7 +20,6 @@ internal class LoginSyncStore(
         buildList {
             if (dataStore.loggedIn.first() == TRUE && dataStore.cookie.first().isNotEmpty()) add(LoginSyncService.YOUTUBE)
             if (dataStore.spdc.first().isNotEmpty()) add(LoginSyncService.SPOTIFY)
-            if (dataStore.lastfmSessionKey.first().isNotEmpty()) add(LoginSyncService.LASTFM)
         }
 
     suspend fun bundle(services: Set<LoginSyncService>): LoginBundle =
@@ -38,12 +37,6 @@ internal class LoginSyncStore(
                     null
                 },
             spotifySpDc = if (LoginSyncService.SPOTIFY in services) dataStore.spdc.first() else null,
-            lastfm =
-                if (LoginSyncService.LASTFM in services) {
-                    LastfmLogin(dataStore.lastfmSessionKey.first(), dataStore.lastfmUsername.first())
-                } else {
-                    null
-                },
         )
 
     /** Writes [bundle] over this device's sign-ins and returns the services it carried. */
@@ -60,10 +53,6 @@ internal class LoginSyncStore(
                 dataStore.setSpotifyPersonalToken("")
                 dataStore.setSpotifyPersonalTokenExpires(0)
                 add(LoginSyncService.SPOTIFY)
-            }
-            bundle.lastfm?.takeIf { it.sessionKey.isNotEmpty() }?.let {
-                dataStore.setLastfmSession(sessionKey = it.sessionKey, username = it.username)
-                add(LoginSyncService.LASTFM)
             }
         }
 

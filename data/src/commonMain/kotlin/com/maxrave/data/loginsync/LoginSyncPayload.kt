@@ -14,8 +14,7 @@ internal val loginSyncJson = Json { ignoreUnknownKeys = true }
 internal data class LoginBundle(
     val youtube: YouTubeLogin? = null,
     val spotifySpDc: String? = null,
-    // A phone on an older version may still send `discordToken`; ignoreUnknownKeys drops it.
-    val lastfm: LastfmLogin? = null,
+    // A phone on an older version may still send `discordToken` or `lastfm`; ignoreUnknownKeys drops them.
 )
 
 @Serializable
@@ -38,12 +37,6 @@ internal data class GoogleAccountWire(
     val cache: String?,
     val isUsed: Boolean,
     val netscapeCookie: String?,
-)
-
-@Serializable
-internal data class LastfmLogin(
-    val sessionKey: String,
-    val username: String,
 )
 
 /** Service names rather than the domain enum, so the payload does not depend on its class shape. */
