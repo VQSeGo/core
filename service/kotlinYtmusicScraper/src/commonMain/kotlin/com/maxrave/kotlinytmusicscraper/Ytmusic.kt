@@ -38,12 +38,14 @@ import io.ktor.client.engine.ProxyConfig
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.HttpRedirect
 import io.ktor.client.plugins.HttpResponseValidator
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.compression.ContentEncoding
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.logging.DEFAULT
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logging
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.accept
 import io.ktor.client.request.get
@@ -182,6 +184,13 @@ class Ytmusic {
             install(HttpRedirect) {
                 checkHttpMethod = false
                 allowHttpsDowngrade = true
+            }
+            // A network that accepts connections and never answers must fail in seconds, not hang.
+            // The download client (getDownloadClient) is separate and has no such limits.
+            install(HttpTimeout) {
+                connectTimeoutMillis = 5_000
+                socketTimeoutMillis = 10_000
+                requestTimeoutMillis = 20_000
             }
             install(Logging) {
                 logger = io.ktor.client.plugins.logging.Logger.DEFAULT
@@ -1234,7 +1243,10 @@ class Ytmusic {
 
     suspend fun is403Url(url: String): Boolean {
         return try {
-            return httpClient.head(url).status.value in 400..499
+            return httpClient
+                .head(url) {
+                    timeout { requestTimeoutMillis = 3_000 }
+                }.status.value in 400..499
         } catch (e: Exception) {
             e.printStackTrace()
             true
