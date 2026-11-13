@@ -59,7 +59,7 @@ actual class Extractor {
         val braveFirst = System.currentTimeMillis() < braveFirstUntil
         if (braveFirst) {
             val early = timedStage(videoId, "brave-first") { braveStreams(videoId) }
-            if (early.isNotEmpty() && early.headCheckRandomStream()) return early
+            if (early.isNotEmpty() && !early.refusedByHead()) return early
             // Only this track falls back: one refused URL (seen on a single video itag while the
             // rest of BravePipe's answers kept passing) is no reason to pay for the PipePipe tiers
             // on every track after it. The window still runs out on its own.
@@ -85,10 +85,12 @@ actual class Extractor {
         timedStage(videoId, "pipepipe-remote") { pipePipeStreams(videoId, REMOTE_TIER) }?.let { return it }
 
         // Tier 3 — a different extractor entirely.
-        return timedStage(videoId, "brave") { braveStreams(videoId) }.also {
-            // Only when BravePipe was not just refused up front: its URL is not HEAD-checked here.
-            if (it.isNotEmpty() && !braveFirst) braveFirstUntil = System.currentTimeMillis() + BRAVE_FIRST_MS
-        }
+        // Checked here like every other tier, so YouTube.newPipePlayer does not HEAD it again.
+        val last = timedStage(videoId, "brave") { braveStreams(videoId) }
+        if (last.isEmpty() || last.refusedByHead()) return emptyList()
+        // Only when BravePipe was not just refused up front.
+        if (!braveFirst) braveFirstUntil = System.currentTimeMillis() + BRAVE_FIRST_MS
+        return last
     }
 
     /** One `Offline` timing line per extraction tier, for the stream-resolution measurements. */

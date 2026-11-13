@@ -49,6 +49,37 @@ internal fun List<Pair<Int, String>>.headCheckRandomStream(): Boolean {
     }.getOrDefault(false)
 }
 
+private val refusalCheckClient: OkHttpClient by lazy {
+    streamHealthCheckClient
+        .newBuilder()
+        .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+}
+
+/**
+ * HEAD one random audio or video URL the way `Ytmusic.is403Url` did for BravePipe's answers: only
+ * a 4xx, or no answer within 3 s, counts as refused. A 5xx passes, unlike [headCheckRandomStream]
+ * (seen 2026-11-13: googlevideo answered 503 to a HEAD during a quick run of skips).
+ */
+internal fun List<Pair<Int, String>>.refusedByHead(): Boolean {
+    val required = ITAG.AUDIO + ITAG.VIDEO
+    val candidate = (this.filter { it.first in required }.ifEmpty { this }).randomOrNull() ?: return true
+    return runCatching {
+        val request =
+            okhttp3.Request
+                .Builder()
+                .head()
+                .url(candidate.second)
+                .build()
+        refusalCheckClient.newCall(request).execute().use { response ->
+            Logger.i("Offline", "head itag=${candidate.first} code=${response.code}")
+            response.code in 400..499
+        }
+    }.onFailure {
+        Logger.i("Offline", "head itag=${candidate.first} failed: ${it::class.simpleName} ${it.message}")
+    }.getOrDefault(true)
+}
+
 class BraveNewPipeDownloaderImpl(
     proxy: Proxy?,
 ) : Downloader() {
