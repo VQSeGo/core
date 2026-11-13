@@ -7,7 +7,7 @@ import com.maxrave.domain.manager.DataStoreManager
 import kotlinx.coroutines.flow.Flow
 
 interface CommonRepository {
-    fun init(cookiePath: String, dataStoreManager: DataStoreManager, isDevBuild: Boolean = false)
+    fun init(cookiePath: String, dataStoreManager: DataStoreManager)
 
     // Database
     fun closeDatabase()

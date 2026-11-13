@@ -173,8 +173,8 @@ internal class DataStoreManagerImpl(
         // Off the caller's thread, like every other write here. DataStore runs an edit's transform in
         // the caller's context, so a write asked for from the main thread needs the main thread to
         // finish. When the player's runBlocking holds the main thread waiting on a later write, the two
-        // wait on each other for good: an ANR at launch on 2026-10-10, when the remote config's
-        // promos block was saved from the main-thread service scope as playback started.
+        // wait on each other for good: an ANR at launch on 2026-10-10, when a setting was saved
+        // from the main-thread service scope as playback started.
         withContext(Dispatchers.IO) {
             settingsDataStore.edit { settings ->
                 settings[stringPreferencesKey(key)] = value
@@ -741,35 +741,6 @@ internal class DataStoreManagerImpl(
         withContext(Dispatchers.IO) {
             settingsDataStore.edit { settings ->
                 settings[SPOTIFY_CLIENT_TOKEN_EXPIRES] = expires
-            }
-        }
-    }
-
-    // Fallback "" (blank) on purpose: credentials are not hard-coded in source — they come
-    // only from the remote config. CommonRepositoryImpl pushes a value into YouTube only when
-    // non-blank, so an empty cache simply leaves TIDAL disabled until the first fetch.
-    override val tidalClientId: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[TIDAL_CLIENT_ID] ?: ""
-        }
-
-    override suspend fun setTidalClientId(value: String) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[TIDAL_CLIENT_ID] = value
-            }
-        }
-    }
-
-    override val tidalClientSecret: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[TIDAL_CLIENT_SECRET] ?: ""
-        }
-
-    override suspend fun setTidalClientSecret(value: String) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[TIDAL_CLIENT_SECRET] = value
             }
         }
     }
@@ -1574,8 +1545,6 @@ internal class DataStoreManagerImpl(
         val SPOTIFY_CLIENT_TOKEN_EXPIRES = longPreferencesKey("spotify_client_token_expires")
         val SPOTIFY_PERSONAL_TOKEN = stringPreferencesKey("spotify_personal_token")
         val SPOTIFY_PERSONAL_TOKEN_EXPIRES = longPreferencesKey("spotify_personal_token_expires")
-        val TIDAL_CLIENT_ID = stringPreferencesKey("tidal_client_id")
-        val TIDAL_CLIENT_SECRET = stringPreferencesKey("tidal_client_secret")
         val HOME_LIMIT = intPreferencesKey("home_limit")
         val CHART_KEY = stringPreferencesKey("chart_key")
         val THEME_MODE = stringPreferencesKey("theme_mode")

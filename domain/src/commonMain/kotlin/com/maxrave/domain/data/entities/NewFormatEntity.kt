@@ -25,7 +25,8 @@ data class NewFormatEntity(
     val cpn: String?,
     val audioUrl: String? = null,
     val videoUrl: String? = null,
-    // AutoMix metadata from Tidal (populated when 320kbps stream is fetched)
+    // Tempo and key columns from the removed TIDAL lookup. Nothing writes them any more (always NULL);
+    // they stay so the schema needs no migration.
     @ColumnInfo(defaultValue = "NULL")
     val bpm: Int? = null,
     @ColumnInfo(name = "music_key", defaultValue = "NULL")

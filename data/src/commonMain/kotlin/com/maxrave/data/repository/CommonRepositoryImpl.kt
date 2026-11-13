@@ -6,7 +6,6 @@ import com.maxrave.data.io.fileSystem
 import com.maxrave.domain.data.model.cookie.CookieItem
 import com.maxrave.domain.data.model.library.LibraryCollectionPreview
 import com.maxrave.domain.data.model.library.LibraryOverview
-import com.maxrave.domain.data.model.promo.Promo
 import com.maxrave.domain.data.type.RecentlyType
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.CommonRepository
@@ -46,7 +45,6 @@ internal class CommonRepositoryImpl(
     override fun init(
         cookiePath: String,
         dataStoreManager: DataStoreManager,
-        isDevBuild: Boolean,
     ) {
         youTube.cookiePath = cookiePath.toPath()
         // The stored session goes onto the client before anything can ask it for a page. The jobs below
@@ -175,52 +173,6 @@ internal class CommonRepositoryImpl(
                         if (visitorData.isNotBlank()) youTube.visitorData = visitorData
                     }
                 }
-            // Observe job: push cached TIDAL credentials from DataStore into YouTube.
-            // Only override when non-blank — credentials are not hard-coded, so an empty cache
-            // just leaves TIDAL disabled until the remote config is fetched.
-            val tidalCredentialJob =
-                launch {
-                    combine(
-                        dataStoreManager.tidalClientId,
-                        dataStoreManager.tidalClientSecret,
-                    ) { id, secret -> id to secret }
-                        .distinctUntilChanged()
-                        .collectLatest { (id, secret) ->
-                            if (id.isNotBlank()) youTube.tidalClientId = id
-                            if (secret.isNotBlank()) youTube.tidalClientSecret = secret
-                        }
-                }
-            // Fetch job: pull the latest TIDAL credentials from GitHub raw on each launch
-            // (async, non-blocking). On success we persist into DataStore; the observe job
-            // above then propagates the new values into YouTube reactively.
-            val tidalRemoteConfigJob =
-                launch {
-                    youTube
-                        .getTidalRemoteConfig(dev = isDevBuild)
-                        .onSuccess { config ->
-                            // Persist only non-blank fields so a malformed/partial file never
-                            // wipes a previously cached value. No need to diff against the current
-                            // value — the observe job's distinctUntilChanged already prevents
-                            // redundant pushes into YouTube.
-                            config.tidalClientId
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { dataStoreManager.setTidalClientId(it) }
-                            config.tidalClientSecret
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { dataStoreManager.setTidalClientSecret(it) }
-                            // Home decides the banner from whatever block is saved when its turn
-                            // comes: a fetch that lands first serves this launch, a slower one the
-                            // next. No block means no campaign, so "[]" clears it; an unchanged block
-                            // costs nothing, DataStore skips equal writes.
-                            dataStoreManager.putString(
-                                Promo.cacheKey(isDevBuild),
-                                config.promos?.toString() ?: "[]",
-                            )
-                        }.onFailure {
-                            Logger.e("RemoteConfig", "TIDAL remote config fetch failed: ${it.message}")
-                        }
-                }
-
             localeJob.join()
             ytCookieJob.join()
             pageIdJob.join()
