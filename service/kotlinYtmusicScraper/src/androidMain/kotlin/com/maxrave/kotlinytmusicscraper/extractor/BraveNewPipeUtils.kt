@@ -2,6 +2,7 @@ package com.maxrave.kotlinytmusicscraper.extractor
 
 import com.maxrave.common.ITAG
 import com.maxrave.kotlinytmusicscraper.models.YouTubeClient
+import com.maxrave.logger.Logger
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.schabi.newpipe.extractor.downloader.Downloader
@@ -40,8 +41,11 @@ internal fun List<Pair<Int, String>>.headCheckRandomStream(): Boolean {
                 .url(candidate.second)
                 .build()
         streamHealthCheckClient.newCall(request).execute().use { response ->
+            Logger.i("Offline", "head itag=${candidate.first} code=${response.code}")
             response.code in 200..299
         }
+    }.onFailure {
+        Logger.i("Offline", "head itag=${candidate.first} failed: ${it::class.simpleName} ${it.message}")
     }.getOrDefault(false)
 }
 
