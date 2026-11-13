@@ -83,6 +83,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import org.koin.android.ext.koin.androidApplication
@@ -245,6 +246,9 @@ private val mediaServiceModule =
         }
     }
 
+// Upper bound for resolving one chunk URL on the loader thread (saved URL check + fresh stream).
+private const val RESOLVE_TIMEOUT_MS = 15_000L
+
 @UnstableApi
 private fun provideResolvingDataSourceFactory(
     cacheDataSourceFactory: CacheDataSource.Factory,
@@ -315,68 +319,72 @@ private fun provideResolvingDataSourceFactory(
         }
         var dataSpecReturn: DataSpec = dataSpec
         var resolved = false
+        // A network that accepts connections and never answers must not hold the loader thread for
+        // the sum of several 5-20 s requests: give up after 15 s and fail through the throw below.
         runBlocking(Dispatchers.IO) {
-            if (mediaId.contains(MERGING_DATA_TYPE.VIDEO)) {
-                val id = mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO)
-                streamRepository.getNewFormat(id).lastOrNull()?.let {
-                    val videoUrl = it.videoUrl
-                    if (videoUrl != null && it.expiredTime > now()) {
-                        Logger.d("Stream", videoUrl)
-                        Logger.d("Stream", "Video from format")
-                        val is403Url = streamRepository.is403Url(videoUrl).firstOrNull() != false
-                        Logger.d("Stream", "is 403 $is403Url")
-                        if (!is403Url) {
-                            Logger.i("Offline", "source $mediaId saved-url pos=${dataSpec.position}")
-                            dataSpecReturn = dataSpec.withUri(videoUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
-                            resolved = true
-                            return@runBlocking
+            withTimeoutOrNull(RESOLVE_TIMEOUT_MS) {
+                if (mediaId.contains(MERGING_DATA_TYPE.VIDEO)) {
+                    val id = mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO)
+                    streamRepository.getNewFormat(id).lastOrNull()?.let {
+                        val videoUrl = it.videoUrl
+                        if (videoUrl != null && it.expiredTime > now()) {
+                            Logger.d("Stream", videoUrl)
+                            Logger.d("Stream", "Video from format")
+                            val is403Url = streamRepository.is403Url(videoUrl).firstOrNull() != false
+                            Logger.d("Stream", "is 403 $is403Url")
+                            if (!is403Url) {
+                                Logger.i("Offline", "source $mediaId saved-url pos=${dataSpec.position}")
+                                dataSpecReturn = dataSpec.withUri(videoUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                                resolved = true
+                                return@withTimeoutOrNull
+                            }
                         }
                     }
-                }
-                streamRepository
-                    .getStream(
-                        dataStoreManager,
-                        id,
-                        isDownloading = false,
-                        isVideo = true,
-                    ).lastOrNull()
-                    ?.let {
-                        Logger.d("Stream", it)
-                        Logger.d("Stream", "Video")
-                        Logger.i("Offline", "source $mediaId fresh-url pos=${dataSpec.position}")
-                        dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
-                        resolved = true
-                    }
-            } else {
-                streamRepository.getNewFormat(mediaId).lastOrNull()?.let {
-                    val audioUrl = it.audioUrl
-                    if (audioUrl != null && it.expiredTime > now()) {
-                        Logger.d("Stream", audioUrl)
-                        Logger.d("Stream", "Audio from format")
-                        val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
-                        Logger.d("Stream", "is 403 $is403Url")
-                        if (!is403Url) {
-                            Logger.i("Offline", "source $mediaId saved-url pos=${dataSpec.position}")
-                            dataSpecReturn = dataSpec.withUri(audioUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                    streamRepository
+                        .getStream(
+                            dataStoreManager,
+                            id,
+                            isDownloading = false,
+                            isVideo = true,
+                        ).lastOrNull()
+                        ?.let {
+                            Logger.d("Stream", it)
+                            Logger.d("Stream", "Video")
+                            Logger.i("Offline", "source $mediaId fresh-url pos=${dataSpec.position}")
+                            dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
                             resolved = true
-                            return@runBlocking
+                        }
+                } else {
+                    streamRepository.getNewFormat(mediaId).lastOrNull()?.let {
+                        val audioUrl = it.audioUrl
+                        if (audioUrl != null && it.expiredTime > now()) {
+                            Logger.d("Stream", audioUrl)
+                            Logger.d("Stream", "Audio from format")
+                            val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
+                            Logger.d("Stream", "is 403 $is403Url")
+                            if (!is403Url) {
+                                Logger.i("Offline", "source $mediaId saved-url pos=${dataSpec.position}")
+                                dataSpecReturn = dataSpec.withUri(audioUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                                resolved = true
+                                return@withTimeoutOrNull
+                            }
                         }
                     }
+                    streamRepository
+                        .getStream(
+                            dataStoreManager,
+                            mediaId,
+                            isDownloading = false,
+                            isVideo = false,
+                        ).lastOrNull()
+                        ?.let {
+                            Logger.d("Stream", it)
+                            Logger.d("Stream", "Audio")
+                            Logger.i("Offline", "source $mediaId fresh-url pos=${dataSpec.position}")
+                            dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                            resolved = true
+                        }
                 }
-                streamRepository
-                    .getStream(
-                        dataStoreManager,
-                        mediaId,
-                        isDownloading = false,
-                        isVideo = false,
-                    ).lastOrNull()
-                    ?.let {
-                        Logger.d("Stream", it)
-                        Logger.d("Stream", "Audio")
-                        Logger.i("Offline", "source $mediaId fresh-url pos=${dataSpec.position}")
-                        dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
-                        resolved = true
-                    }
             }
         }
         // getStream above is where a live broadcast is first recognised. Its HLS playlist URL must
@@ -552,7 +560,7 @@ private fun provideHttpDataSourceFactory(
         OkHttpDataSource.Factory(
             OkHttpClient
                 .Builder()
-                .connectTimeout(30.seconds)
+                .connectTimeout(8.seconds)
                 .readTimeout(30.seconds)
                 .proxy(
                     proxy,
