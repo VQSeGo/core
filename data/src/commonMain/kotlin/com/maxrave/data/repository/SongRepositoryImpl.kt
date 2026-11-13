@@ -463,7 +463,9 @@ internal class SongRepositoryImpl(
         }
 
     override suspend fun getSongInfoEntity(videoId: String): Flow<SongInfoEntity?> =
-        flow { emit(localDataSource.getSongInfo(videoId)) }.flowOn(Dispatchers.IO)
+        // Rows are stored under the bare id (getSongInfo saves YouTube's videoId), while a video in the queue
+        // carries the MERGING_DATA_TYPE.VIDEO prefix: strip it, or a video never finds its saved info.
+        flow { emit(localDataSource.getSongInfo(videoId.removePrefix(MERGING_DATA_TYPE.VIDEO))) }.flowOn(Dispatchers.IO)
 
     override suspend fun recoverQueue(temp: List<Track>) {
         val queueEntity = QueueEntity(listTrack = temp)
