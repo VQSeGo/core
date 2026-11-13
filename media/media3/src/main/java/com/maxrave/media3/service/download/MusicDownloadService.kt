@@ -68,6 +68,10 @@ internal class MusicDownloadService :
             finalException: Exception?,
         ) {
             if (download.state != Download.STATE_FAILED && download.state != Download.STATE_COMPLETED) return
+            // A video half is fetched on its own whenever a clip downloaded as audio is played, also
+            // with no internet; its failure leaves the track playable from its audio and is retried
+            // on the next play, so it is not worth a notification each time.
+            if (download.state == Download.STATE_FAILED && download.request.id.startsWith(MERGING_DATA_TYPE.VIDEO)) return
             scope.launch {
                 if (!notificationsEnabled()) return@launch
                 // Smart downloads fetch dozens of songs on their own, and a notification for each would

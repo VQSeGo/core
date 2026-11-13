@@ -250,19 +250,37 @@ internal class DownloadUtils(
             false,
         )
         if (isVideo) {
-            val id = MERGING_DATA_TYPE.VIDEO + videoId
-            val downloadRequestVideo =
-                DownloadRequest
-                    .Builder(id, id.toUri())
-                    .setData("Video $title".toByteArray())
-                    .setCustomCacheKey(id)
-                    .build()
+            downloadVideoPart(videoId, title)
+        }
+    }
+
+    override fun downloadVideoPart(
+        videoId: String,
+        title: String,
+    ) {
+        // Called on every play of a clip whose video half is missing. Re-adding a running download
+        // would cancel and restart its task. A queued or stopped one is sent again on purpose: after
+        // a cold start nothing runs until DownloadService is started, and the add starts it.
+        val state = _downloads.value[videoId]?.second?.state
+        if (state == Download.STATE_DOWNLOADING || state == Download.STATE_COMPLETED) return
+        val id = MERGING_DATA_TYPE.VIDEO + videoId
+        val downloadRequestVideo =
+            DownloadRequest
+                .Builder(id, id.toUri())
+                .setData("Video $title".toByteArray())
+                .setCustomCacheKey(id)
+                .build()
+        try {
             DownloadService.sendAddDownload(
                 context,
                 MusicDownloadService::class.java,
                 downloadRequestVideo,
                 false,
             )
+            Logger.i("Offline", "video part queued $videoId")
+        } catch (e: IllegalStateException) {
+            // startService from the background; the next play asks again.
+            Logger.w("Offline", "video part not queued $videoId: ${e.message}")
         }
     }
 
@@ -316,12 +334,17 @@ internal class DownloadUtils(
                             // would read it as downloading and write that over the
                             // NOT_DOWNLOADED the caller has just set.
                             DownloadState.STATE_NOT_DOWNLOADED
+                        } else if (audio == Download.STATE_COMPLETED) {
+                            // The audio alone makes the track playable, video or not: the player
+                            // falls back to it while the video half is queued, downloading or has
+                            // failed. Waiting for the video would hide the "downloaded" badge
+                            // (and the track from the offline list) for the length of a video
+                            // download fetched after the fact, and for good if that one fails.
+                            DownloadState.STATE_DOWNLOADED
                         } else {
                             when (audio to video) {
-                                Download.STATE_COMPLETED to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADED
                                 Download.STATE_FAILED to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
                                 Download.STATE_QUEUED to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
-                                Download.STATE_COMPLETED to null -> DownloadState.STATE_DOWNLOADED
                                 Download.STATE_FAILED to null -> DownloadState.STATE_NOT_DOWNLOADED
                                 Download.STATE_QUEUED to null -> DownloadState.STATE_PREPARING
                                 null to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADING

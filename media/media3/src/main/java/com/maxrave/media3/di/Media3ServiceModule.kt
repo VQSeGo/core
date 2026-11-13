@@ -160,6 +160,7 @@ private val mediaServiceModule =
                 get(),
                 get(named(SERVICE_SCOPE)),
                 get(),
+                get(),
             )
         }
 
@@ -490,6 +491,7 @@ private fun provideMergingMediaSource(
     streamRepository: StreamRepository,
     coroutineScope: CoroutineScope,
     dataStoreManager: DataStoreManager,
+    downloadHandler: DownloadHandler,
 ): MergingMediaSourceFactory =
     MergingMediaSourceFactory(
         provideMediaSourceFactory(
@@ -502,8 +504,8 @@ private fun provideMergingMediaSource(
         ),
         provideLiveStreamMediaSourceFactory(context, streamRepository, dataStoreManager),
         dataStoreManager,
-        context,
         downloadCache,
+        downloadHandler,
     )
 
 @UnstableApi

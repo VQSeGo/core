@@ -22,6 +22,15 @@ interface DownloadHandler {
         thumbnail: String,
     )
 
+    /**
+     * Queues the video half of an already downloaded clip, for "play video instead of audio".
+     * Does nothing while that half is downloading or done. Desktop downloads audio only.
+     */
+    fun downloadVideoPart(
+        videoId: String,
+        title: String,
+    )
+
     fun removeDownload(videoId: String)
 
     fun removeAllDownloads()

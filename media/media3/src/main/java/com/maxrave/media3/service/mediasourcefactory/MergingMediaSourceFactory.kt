@@ -1,8 +1,5 @@
 package com.maxrave.media3.service.mediasourcefactory
 
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
@@ -15,6 +12,7 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.manager.DataStoreManager
+import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.logger.Logger
 import com.maxrave.media3.extension.isFullyCached
 import kotlinx.coroutines.Dispatchers
@@ -27,8 +25,8 @@ internal class MergingMediaSourceFactory(
     // HLS over plain HTTP, for live broadcasts only — see LiveStreamPlayback.kt.
     private val liveStreamMediaSourceFactory: MediaSource.Factory,
     private val dataStoreManager: DataStoreManager,
-    private val context: Context,
     private val downloadCache: Cache,
+    private val downloadHandler: DownloadHandler,
 ) : MediaSource.Factory {
     override fun setDrmSessionManagerProvider(drmSessionManagerProvider: DrmSessionManagerProvider): MediaSource.Factory {
         defaultMediaSourceFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
@@ -60,7 +58,17 @@ internal class MergingMediaSourceFactory(
         Logger.w("Merging Media Source", mediaItem.mediaMetadata.description.toString())
         val getVideo = runBlocking(Dispatchers.IO) { dataStoreManager.watchVideoInsteadOfPlayingAudio.first() } == DataStoreManager.Values.TRUE
         Logger.w("Merging Media Source", getVideo.toString())
-        if (mediaItem.mediaMetadata.description == MERGING_DATA_TYPE.VIDEO && getVideo && !isVideoUnreachable(mediaItem.mediaId)) {
+        val isClip = mediaItem.mediaMetadata.description == MERGING_DATA_TYPE.VIDEO && getVideo
+        if (isClip && isAudioOnlyDownload(mediaItem.mediaId)) {
+            // Downloaded while video playback was off: the audio is on disk, the video is not.
+            // Play the audio whatever the network says (a network without internet still claims
+            // to be online, and one failing half fails the whole merged source), and fetch the
+            // video half so the next play has it.
+            Logger.i("Offline", "audio-only ${mediaItem.mediaId}: video part not downloaded")
+            downloadHandler.downloadVideoPart(mediaItem.mediaId, mediaItem.mediaMetadata.title?.toString().orEmpty())
+            return defaultMediaSourceFactory.createMediaSource(mediaItem)
+        }
+        if (isClip) {
             val videoItem =
                 mediaItem
                     .buildUpon()
@@ -78,17 +86,7 @@ internal class MergingMediaSourceFactory(
 //        val default = defaultMediaSourceFactory.createMediaSource(mediaItem.buildUpon().setMediaId("AUDIO-${mediaItem.mediaId}").build())
     }
 
-    // A track downloaded while video playback was off holds its audio only. Offline, its video
-    // half can be neither read nor fetched, and one failing half fails the whole merged source.
-    private fun isVideoUnreachable(mediaId: String): Boolean =
+    private fun isAudioOnlyDownload(mediaId: String): Boolean =
         downloadCache.isFullyCached(mediaId, 0L) &&
-            !downloadCache.isFullyCached("${MERGING_DATA_TYPE.VIDEO}$mediaId", 0L) &&
-            !isOnline()
-
-    private fun isOnline(): Boolean {
-        val connectivityManager = context.getSystemService(ConnectivityManager::class.java) ?: return true
-        return connectivityManager
-            .getNetworkCapabilities(connectivityManager.activeNetwork)
-            ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-    }
+            !downloadCache.isFullyCached("${MERGING_DATA_TYPE.VIDEO}$mediaId", 0L)
 }
