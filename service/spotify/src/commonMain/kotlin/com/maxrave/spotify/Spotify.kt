@@ -1,7 +1,6 @@
 package com.maxrave.spotify
 
 import com.maxrave.spotify.auth.SpotifyAuth
-import com.maxrave.spotify.model.response.spotify.CanvasResponse
 import com.maxrave.spotify.model.response.spotify.ClientTokenResponse
 import com.maxrave.spotify.model.response.spotify.PersonalTokenResponse
 import com.maxrave.spotify.model.response.spotify.SpotifyLyricsResponse
@@ -86,13 +85,5 @@ class Spotify {
                 clientToken = clientToken,
                 trackId,
             ).body<SpotifyLyricsResponse>()
-    }
-
-    suspend fun getSpotifyCanvas(
-        trackId: String,
-        token: String,
-        clientToken: String,
-    ) = runCatching {
-        spotifyClient.getSpotifyCanvas(trackId, token, clientToken).body<CanvasResponse>()
     }
 }

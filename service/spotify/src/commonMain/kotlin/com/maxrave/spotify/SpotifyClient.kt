@@ -3,7 +3,6 @@ package com.maxrave.spotify
 import com.maxrave.ktorext.curl.CurlLogger
 import com.maxrave.ktorext.encoding.brotli
 import com.maxrave.ktorext.getEngine
-import com.maxrave.spotify.model.body.CanvasBody
 import com.maxrave.spotify.model.body.SpotifyClientBody
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.ProxyConfig
@@ -223,35 +222,6 @@ class SpotifyClient {
     }
     // {"searchTerm":"trình+hieuthuhai","offset":0,"limit":20,"numberOfTopResults":20,"includeAudiobooks":true,"includePreReleases":false}
     // {"persistedQuery":{"version":1,"sha256Hash":"e4ed1f91a2cc5415befedb85acf8671dc1a4bf3ca1a5b945a6386101a22e28a6"}}
-
-    suspend fun getSpotifyCanvas(
-        trackId: String,
-        token: String,
-        clientToken: String,
-    ) = spotifyClient.post("https://spclient.wg.spotify.com/canvaz-cache/v0/canvases") {
-        headers {
-            append(HttpHeaders.Accept, "application/protobuf")
-            append(HttpHeaders.ContentType, "application/protobuf")
-            append(
-                HttpHeaders
-                    .AcceptEncoding,
-                "gzip, deflate, br",
-            )
-            append(HttpHeaders.Authorization, "Bearer $token")
-            append("Client-Token", clientToken)
-            append(HttpHeaders.UserAgent, "Spotify/9.0.34.593 iOS/18.4 (iPhone15,3)")
-        }
-        setBody(
-            CanvasBody(
-                tracks =
-                    listOf(
-                        CanvasBody.Track(
-                            track_uri = "spotify:track:$trackId",
-                        ),
-                    ),
-            ),
-        )
-    }
 
     suspend fun getSpotifyClientToken() =
         jsonClient.post("https://clienttoken.spotify.com/v1/clienttoken") {

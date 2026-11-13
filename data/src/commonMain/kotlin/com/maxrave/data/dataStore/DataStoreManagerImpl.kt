@@ -719,38 +719,6 @@ internal class DataStoreManagerImpl(
         }
     }
 
-    override val spotifyCanvas: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[SPOTIFY_CANVAS] ?: FALSE
-        }
-
-    override suspend fun setSpotifyCanvas(spotifyCanvas: Boolean) {
-        withContext(Dispatchers.IO) {
-            if (spotifyCanvas) {
-                settingsDataStore.edit { settings ->
-                    settings[SPOTIFY_CANVAS] = TRUE
-                }
-            } else {
-                settingsDataStore.edit { settings ->
-                    settings[SPOTIFY_CANVAS] = FALSE
-                }
-            }
-        }
-    }
-
-    override val amAnimatedArtwork: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[AM_ANIMATED_ARTWORK] ?: FALSE
-        }
-
-    override suspend fun setAMAnimatedArtwork(enabled: Boolean) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[AM_ANIMATED_ARTWORK] = if (enabled) TRUE else FALSE
-            }
-        }
-    }
-
     override val spotifyClientToken: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[SPOTIFY_CLIENT_TOKEN] ?: ""
@@ -1615,8 +1583,6 @@ internal class DataStoreManagerImpl(
         val REVERB_ENABLED = stringPreferencesKey("reverb_enabled")
         val REVERB_PRESET = stringPreferencesKey("reverb_preset")
         val REVERB_MIX = stringPreferencesKey("reverb_mix")
-        val SPOTIFY_CANVAS = stringPreferencesKey("spotify_canvas")
-        val AM_ANIMATED_ARTWORK = stringPreferencesKey("am_animated_artwork")
         val SPOTIFY_CLIENT_TOKEN = stringPreferencesKey("spotify_client_token")
         val SPOTIFY_CLIENT_TOKEN_EXPIRES = longPreferencesKey("spotify_client_token_expires")
         val SPOTIFY_PERSONAL_TOKEN = stringPreferencesKey("spotify_personal_token")

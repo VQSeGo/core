@@ -4,8 +4,6 @@ import com.maxrave.logger.Logger
 import io.ktor.client.call.body
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
-import org.simpmusic.lyrics.am.AMAlbumResource
-import org.simpmusic.lyrics.am.AMSongWithAlbum
 import org.simpmusic.lyrics.am.parseAMHlsVariants
 import org.simpmusic.lyrics.am.pickAMRendition
 import org.simpmusic.lyrics.am.AMArtistResource
@@ -127,72 +125,6 @@ class SimpMusicLyricsClient {
                 .resources
                 ?.artists
                 ?.get(id)
-        }
-
-    /**
-     * Search the AM catalog for albums, ranked the way AM ranked them. Each result already carries
-     * its animated artwork when it has one, so the caller needs no follow-up request.
-     */
-    suspend fun searchAMAlbum(
-        query: String,
-        limit: Int = 5,
-    ): Result<List<AMAlbumResource>> =
-        runCatching {
-            val response = lyricsService.searchAMAlbum(query, limit)
-            if (response.status.value !in 200..299) {
-                throw Exception("AM album search failed: ${response.status.value}")
-            }
-            val parsed = response.body<AMSearchResponse>()
-            val resources = parsed.resources?.albums.orEmpty()
-            // Keep the search ranking from results.data; fall back to the resources map order.
-            parsed.results
-                ?.albums
-                ?.data
-                ?.mapNotNull { resources[it.id] }
-                ?: resources.values.toList()
-        }
-
-    /**
-     * Tracks reached by title, each paired with the album it appears on.
-     *
-     * The pairing comes from `relationships.albums`, never from the flat `resources.albums` map:
-     * that map holds every album any hit belongs to, so reading an album out of it directly
-     * attaches whichever release happens to carry artwork to whatever track was searched for.
-     * Order follows the search ranking; the caller still decides which hit is the right track.
-     */
-    suspend fun searchAMSongsWithAlbums(
-        query: String,
-        limit: Int = 5,
-    ): Result<List<AMSongWithAlbum>> =
-        runCatching {
-            val response = lyricsService.searchAMSongs(query, limit)
-            if (response.status.value !in 200..299) {
-                throw Exception("AM song search failed: ${response.status.value}")
-            }
-            val parsed = response.body<AMSearchResponse>()
-            val songs = parsed.resources?.songs.orEmpty()
-            val albums = parsed.resources?.albums.orEmpty()
-            val ranked =
-                parsed.results
-                    ?.songs
-                    ?.data
-                    ?.mapNotNull { songs[it.id] }
-                    ?: songs.values.toList()
-            ranked.mapNotNull { song ->
-                val albumId =
-                    song.relationships
-                        ?.albums
-                        ?.data
-                        ?.firstOrNull()
-                        ?.id
-                val album = albumId?.let { albums[it] } ?: return@mapNotNull null
-                AMSongWithAlbum(
-                    songName = song.attributes?.name,
-                    artistName = song.attributes?.artistName,
-                    durationInMillis = song.attributes?.durationInMillis,
-                    album = album,
-                )
-            }
         }
 
     /**

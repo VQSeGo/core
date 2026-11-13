@@ -388,18 +388,6 @@ interface DatabaseDao {
         artistId: List<String>?,
     )
 
-    @Query("UPDATE song SET canvasUrl = :canvasUrl WHERE videoId = :videoId")
-    suspend fun updateCanvasUrl(
-        videoId: String,
-        canvasUrl: String,
-    )
-
-    @Query("UPDATE song SET canvasThumbUrl = :canvasThumbUrl WHERE videoId = :videoId")
-    suspend fun updateCanvasThumbUrl(
-        videoId: String,
-        canvasThumbUrl: String,
-    )
-
     @Query("UPDATE song SET thumbnails = :thumbnails WHERE videoId = :videoId")
     suspend fun updateThumbnailsSongEntity(
         thumbnails: String,
@@ -496,9 +484,6 @@ interface DatabaseDao {
         primaryKeyList: List<String>,
         offset: Int,
     ): List<SongEntity>
-
-    @Query("SELECT * FROM song WHERE canvasThumbUrl IS NOT NULL ORDER BY totalPlayTime DESC LIMIT :max")
-    suspend fun getCanvasSong(max: Int): List<SongEntity>
 
     @Query("SELECT videoId FROM song WHERE videoId IN (:primaryKeyList) AND downloadState = 3")
     fun getDownloadedVideoIdByListVideoId(primaryKeyList: List<String>): Flow<List<String>>

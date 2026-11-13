@@ -6,7 +6,6 @@ import com.maxrave.domain.data.model.comments.CommentLikeState
 import com.maxrave.domain.data.model.comments.YouTubeComment
 import com.maxrave.domain.data.model.comments.YouTubeCommentsHeader
 import com.maxrave.domain.data.model.comments.YouTubeCommentsPage
-import com.maxrave.domain.data.model.canvas.CanvasResult
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.metadata.Line
 import com.maxrave.domain.data.model.metadata.Lyrics
@@ -34,7 +33,6 @@ import com.maxrave.kotlinytmusicscraper.models.youtube.Transcript
 import com.maxrave.kotlinytmusicscraper.models.youtube.YouTubeInitialPage
 import com.maxrave.kotlinytmusicscraper.pages.CommentItem
 import com.maxrave.kotlinytmusicscraper.pages.CommentsPage
-import com.maxrave.spotify.model.response.spotify.CanvasResponse
 import com.maxrave.spotify.model.response.spotify.SpotifyLyricsResponse
 import org.simpmusic.lyrics.models.response.LyricsResponse
 import org.simpmusic.lyrics.models.response.TranslatedLyricsResponse
@@ -430,29 +428,6 @@ internal fun SearchSuggestions.toDomainSearchSuggestions(): com.maxrave.domain.d
                 }
             },
     )
-
-internal fun CanvasResponse.toCanvasResult(): CanvasResult? {
-    val canvasUrl = this.canvases.firstOrNull()?.canvas_url ?: return null
-    val canvasThumbs = this.canvases.firstOrNull()?.thumbsOfCanva
-    val thumbUrl =
-        if (!canvasThumbs.isNullOrEmpty()) {
-            (
-                canvasThumbs.let { thumb ->
-                    thumb
-                        .maxByOrNull {
-                            (it.height ?: 0) + (it.width ?: 0)
-                        }?.url
-                } ?: canvasThumbs.first().url
-            )
-        } else {
-            null
-        }
-    return CanvasResult(
-        isVideo = canvasUrl.contains(".mp4"),
-        canvasUrl = canvasUrl,
-        canvasThumbUrl = thumbUrl,
-    )
-}
 
 internal fun YouTubeWatchEndpoint.toWatchEndpoint(): WatchEndpoint =
     WatchEndpoint(

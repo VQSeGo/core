@@ -294,11 +294,6 @@ internal class SongRepositoryImpl(
         localDataSource.recoverQueue(QueueEntity(listTrack = liveQueue))
     }
 
-    override fun getCanvasSong(max: Int): Flow<List<SongEntity>> =
-        flow {
-            emit(localDataSource.getCanvasSong(max))
-        }.flowOn(Dispatchers.IO)
-
     override fun getSongById(id: String): Flow<SongEntity?> =
         flow {
             emit(localDataSource.getSong(id))

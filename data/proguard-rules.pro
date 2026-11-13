@@ -142,9 +142,6 @@
 -dontwarn com.maxrave.media3.di.Media3ServiceModuleKt
 -dontwarn com.maxrave.media3.exoplayer.ExoPlayerAdapter
 -dontwarn com.maxrave.spotify.Spotify
--dontwarn com.maxrave.spotify.model.response.spotify.CanvasResponse$Canvas$ThumbOfCanva
--dontwarn com.maxrave.spotify.model.response.spotify.CanvasResponse$Canvas
--dontwarn com.maxrave.spotify.model.response.spotify.CanvasResponse
 -dontwarn com.maxrave.spotify.model.response.spotify.ClientTokenResponse$GrantedToken
 -dontwarn com.maxrave.spotify.model.response.spotify.ClientTokenResponse
 -dontwarn com.maxrave.spotify.model.response.spotify.PersonalTokenResponse

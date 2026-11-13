@@ -72,8 +72,6 @@ interface SongRepository {
      */
     suspend fun clearHistoryAndOrphanedSongs(): Int
 
-    fun getCanvasSong(max: Int): Flow<List<SongEntity>>
-
     fun getSongById(id: String): Flow<SongEntity?>
 
     fun getSongAsFlow(id: String): Flow<SongEntity?>

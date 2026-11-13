@@ -4,7 +4,6 @@ import com.maxrave.domain.data.entities.LyricsEntity
 import com.maxrave.domain.data.entities.TranslatedLyricsEntity
 import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.browse.artist.ArtistEditorial
-import com.maxrave.domain.data.model.canvas.CanvasResult
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.utils.Resource
@@ -31,28 +30,6 @@ interface LyricsCanvasRepository {
         preferLang: String,
         videoId: String,
     ): Flow<Resource<Pair<Lyrics, Lyrics?>>>
-
-    fun getCanvas(
-        dataStoreManager: DataStoreManager,
-        videoId: String,
-        duration: Int,
-    ): Flow<Resource<CanvasResult>>
-
-    /**
-     * Animated album artwork from the hidden AM catalog, returned as the same [CanvasResult] a
-     * Spotify canvas produces and stored in the same columns. Needs no login.
-     */
-    fun getAMAnimatedArtwork(videoId: String): Flow<Resource<CanvasResult>>
-
-    suspend fun updateCanvasUrl(
-        videoId: String,
-        canvasUrl: String,
-    )
-
-    suspend fun updateCanvasThumbUrl(
-        videoId: String,
-        canvasThumbUrl: String,
-    )
 
     fun getSpotifyLyrics(
         dataStoreManager: DataStoreManager,
