@@ -112,13 +112,6 @@ class MpvPlayerAdapter(
         }
 
         coroutineScope.launch {
-            dataStoreManager.crossfadeDjMode.collect { enabled ->
-                djCrossfadeEnabled = (enabled == DataStoreManager.TRUE)
-                Logger.d(TAG, "DJ crossfade mode: $djCrossfadeEnabled")
-            }
-        }
-
-        coroutineScope.launch {
             dataStoreManager.watchVideoInsteadOfPlayingAudio.collect { enabled ->
                 watchVideoEnabled = (enabled == DataStoreManager.TRUE)
                 Logger.d(TAG, "Watch video enabled: $watchVideoEnabled")
@@ -223,9 +216,6 @@ class MpvPlayerAdapter(
 
     @Volatile
     private var crossfadeDurationMs = 5000
-
-    @Volatile
-    private var djCrossfadeEnabled = false
 
     // Whether video content plays as video (watch-video setting) — the same condition
     // extractPlayableUrl uses to include the video stream in the edl:// merged source.
@@ -1214,7 +1204,7 @@ class MpvPlayerAdapter(
             // rubberband also absorbs the tempo change once present, so setRate keeps working.
             // Only drive the shift if mpv actually took the filter — a build without rubberband
             // rejects it, and af-command against a filter that is not in the chain fails every time.
-            val chain = installCrossfadeChain(sweep = null, sweepStartHz = 0f, pitchShift = true)
+            val chain = installCrossfadeChain(pitchShift = true)
             if (chain.pitchShift) {
                 setPitchScale(internalPlaybackPitch)
             } else {
@@ -1610,8 +1600,8 @@ class MpvPlayerAdapter(
                     // Start position updates
                     startPositionUpdates()
 
-                    // Eagerly load audio metadata for auto crossfade / DJ mode calculations
-                    if (crossfadeEnabled && (crossfadeDurationMs == DataStoreManager.CROSSFADE_DURATION_AUTO || djCrossfadeEnabled)) {
+                    // Eagerly load audio metadata for auto crossfade calculations
+                    if (crossfadeEnabled && crossfadeDurationMs == DataStoreManager.CROSSFADE_DURATION_AUTO) {
                         val currentVideoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId ?: ""
                         loadAudioMetaIfNeeded(currentVideoId)
                     }
@@ -2127,7 +2117,7 @@ class MpvPlayerAdapter(
                     crossfadeFromIndex = localCurrentMediaItemIndex
 
                     // AutoMix: load metadata and calculate parameters
-                    if (isAutoMode || djCrossfadeEnabled) {
+                    if (isAutoMode) {
                         loadAudioMetaIfNeeded(currentVideoId)
                         loadAudioMetaIfNeeded(nextVideoId)
                     }
@@ -2324,33 +2314,14 @@ class MpvPlayerAdapter(
         // A pure 0..100 attenuation per handle: the user's level rides on the master volume and must
         // come out of the crossfade exactly as it went in.
         val targetVolume = 100
-        val wantDjFilter = djCrossfadeEnabled
         val wantAutoMixRamp = targetSpeedRatio != 1.0f || targetPitchRatio != 1.0f
         val outgoingPlayer = currentPlayer
 
-        // Arm the filter chains BEFORE the animation starts, so the 50 steps only have to retune
-        // live filters (af-command) instead of rebuilding the chain each time. Both are armed at
-        // their transparent starting cutoff, so arming is inaudible on its own.
-        //
-        // The outgoing handle carries the low-pass AND the pitch shift; the incoming one only ever
-        // gets the high-pass, because Android adjusts speed/pitch on the outgoing player alone.
+        // Arm the pitch stage on the outgoing handle BEFORE the animation starts, so the 50 steps
+        // only have to retune it instead of rebuilding the chain each time.
         val outgoingChain =
-            if ((wantDjFilter || wantAutoMixRamp) && outgoingPlayer != null) {
-                outgoingPlayer.installCrossfadeChain(
-                    sweep = if (wantDjFilter) MpvCrossfadeFilter.LOW_PASS else null,
-                    sweepStartHz = LPF_START_HZ,
-                    pitchShift = wantAutoMixRamp,
-                )
-            } else {
-                MpvPlayer.CrossfadeChain.NONE
-            }
-        val incomingChain =
-            if (wantDjFilter) {
-                nextPlayer.installCrossfadeChain(
-                    sweep = MpvCrossfadeFilter.HIGH_PASS,
-                    sweepStartHz = HPF_START_HZ,
-                    pitchShift = false,
-                )
+            if (wantAutoMixRamp && outgoingPlayer != null) {
+                outgoingPlayer.installCrossfadeChain(pitchShift = true)
             } else {
                 MpvPlayer.CrossfadeChain.NONE
             }
@@ -2358,15 +2329,13 @@ class MpvPlayerAdapter(
         // Only drive what mpv actually installed. The speed ramp still runs without rubberband —
         // mpv falls back to its built-in scaletempo2, which stretches tempo with pitch preserved,
         // the same thing Media3's PlaybackParameters.speed does. Only the pitch match is lost.
-        val sweepOutgoing = outgoingChain.sweep
-        val sweepIncoming = incomingChain.sweep
         val rampSpeed = wantAutoMixRamp && outgoingPlayer != null
         val rampPitch = rampSpeed && outgoingChain.pitchShift
 
         Logger.d(
             TAG,
             "Crossfade animation: ${effectiveDurationMs}ms, $steps steps, ${delayPerStep}ms/step, " +
-                "internalVolume=$internalVolume, dj=$wantDjFilter (out=$sweepOutgoing, in=$sweepIncoming), " +
+                "internalVolume=$internalVolume, " +
                 "autoMix=$wantAutoMixRamp (speed=$targetSpeedRatio ramp=$rampSpeed, " +
                 "pitch=$targetPitchRatio ramp=$rampPitch)",
         )
@@ -2387,28 +2356,6 @@ class MpvPlayerAdapter(
 
                 val fadeInVolume = (targetVolume * kotlin.math.sin(angle)).toInt()
                 nextPlayer.setFadeVolume(fadeInVolume)
-
-                // DJ-style filter sweep, alongside the volume fade.
-                // S-curve (sigmoid) on the time axis holds both tracks near full spectrum at the
-                // start and end and transitions steeply in the middle; exponential interpolation
-                // on the frequency axis matches logarithmic hearing perception.
-                if (sweepOutgoing || sweepIncoming) {
-                    val filterProgress = sigmoid(progress)
-                    if (sweepOutgoing) {
-                        // Outgoing: LPF sweeps 20kHz → 200Hz
-                        outgoingPlayer?.setCrossfadeCutoffHz(
-                            MpvCrossfadeFilter.LOW_PASS,
-                            exponentialInterpolate(LPF_START_HZ, LPF_END_HZ, filterProgress),
-                        )
-                    }
-                    if (sweepIncoming) {
-                        // Incoming: HPF sweeps 2kHz → 20Hz
-                        nextPlayer.setCrossfadeCutoffHz(
-                            MpvCrossfadeFilter.HIGH_PASS,
-                            exponentialInterpolate(HPF_START_HZ, HPF_END_HZ, filterProgress),
-                        )
-                    }
-                }
 
                 // AutoMix: only the OUTGOING player is adjusted to match the incoming track; the
                 // incoming one stays at natural speed and pitch.
@@ -2439,7 +2386,7 @@ class MpvPlayerAdapter(
             finalizeCrossfade(nextIndex, nextPlayer)
         } catch (e: CancellationException) {
             // Undo everything this fade did to the audio of BOTH handles. Whichever one survives
-            // the cancel must not be left muffled or off-tempo; for the one that gets released it
+            // the cancel must not be left off-tempo; for the one that gets released it
             // is a harmless no-op (MpvPlayer guards on isReleased).
             outgoingPlayer?.endCrossfadeAudio()
             nextPlayer.endCrossfadeAudio()
@@ -2487,9 +2434,8 @@ class MpvPlayerAdapter(
         // (replaces the minimal crossfade error listener)
         setupPlayerEventsInternal(nextPlayer)
 
-        // Ensure correct volume, and drop the high-pass this player faded in under so it is back to
-        // untouched playback. (Its speed/pitch were never moved — only the outgoing track is
-        // adjusted — but restore them anyway, mirroring the Android finalize path.)
+        // Ensure correct volume and untouched playback. (Its speed/pitch were never moved — only the
+        // outgoing track is adjusted — but restore them anyway, mirroring the Android finalize path.)
         currentPlayer?.applyPlaybackLevels()
         currentPlayer?.setFadeVolume(100)
         currentPlayer?.endCrossfadeAudio()
@@ -2727,15 +2673,6 @@ class MpvPlayerAdapter(
         private const val BPM_GAP_DURATION_SCALE = 2.0
         private const val UNKNOWN_GAP_DEFAULT_FACTOR = 1.25
 
-        // DJ crossfade sigmoid steepness (higher = sharper S-curve transition)
-        private const val DJ_FILTER_SIGMOID_K = 6f
-
-        // DJ crossfade filter frequency bounds
-        private const val LPF_START_HZ = 20000f // Low-pass starts wide open
-        private const val LPF_END_HZ = 200f // Low-pass ends muffled (keeps bass thump like Pioneer DJM)
-        private const val HPF_START_HZ = 2000f // High-pass starts lower — incoming track fills in faster
-        private const val HPF_END_HZ = 20f // High-pass ends wide open
-
         private const val BPM_RATIO_MIN = 0.75f // Max 25% slower
         private const val BPM_RATIO_MAX = 1.25f // Max 25% faster
 
@@ -2758,30 +2695,7 @@ class MpvPlayerAdapter(
         private const val NATURAL_PITCH_SCALE = 1.0f
     }
 
-    // ========== DJ crossfade math (ported from CrossfadeExoPlayerAdapter) ==========
-
-    /**
-     * S-curve (sigmoid) function for DJ filter crossfade timing.
-     * Keeps both tracks near full spectrum at the start and end, with a steep transition in the
-     * middle — like a real DJ mixer crossfader.
-     */
-    private fun sigmoid(
-        t: Float,
-        k: Float = DJ_FILTER_SIGMOID_K,
-    ): Float = 1.0f / (1.0f + exp(-k * (t - 0.5f)))
-
-    /**
-     * Exponential interpolation between two values.
-     * Frequency perception is logarithmic, so this produces a natural-sounding sweep.
-     */
-    private fun exponentialInterpolate(
-        start: Float,
-        end: Float,
-        t: Float,
-    ): Float {
-        if (start <= 0f || end <= 0f) return end
-        return exp(ln(start) + (ln(end) - ln(start)) * t)
-    }
+    // ========== AutoMix math (ported from CrossfadeExoPlayerAdapter) ==========
 
     private fun lerp(
         start: Float,

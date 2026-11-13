@@ -9,21 +9,6 @@ import java.util.Locale
 private const val TAG = "MpvPlayer"
 
 /**
- * The two halves of the DJ-style filter sweep, mirroring `BiquadFilter.FilterType` on the Android
- * backend: during a crossfade the outgoing track gets a low-pass whose cutoff falls, and the
- * incoming track a high-pass whose cutoff falls.
- *
- * [lavfiName] is the libavfilter filter name. It doubles as the `af-command` *target*, which is why
- * the caller has to say which sweep a handle is running — see [MpvPlayer.setCrossfadeCutoffHz].
- */
-enum class MpvCrossfadeFilter(
-    internal val lavfiName: String,
-) {
-    LOW_PASS("lowpass"),
-    HIGH_PASS("highpass"),
-}
-
-/**
  * Event callbacks for a single [MpvPlayer], shaped after vlcj's `MediaPlayerEventAdapter` so the
  * adapter's event-handling logic is a straight port.
  *
@@ -119,10 +104,7 @@ class MpvPlayer private constructor(
         /** Scratch buffer for get/set_property with a native format. One per calling thread. */
         private val scratch = ThreadLocal.withInitial { Memory(8) }
 
-        /** `@label:` of the DJ sweep entry, so `af-command` can retune it mid-fade. */
-        private const val SWEEP_LABEL = "simpDjSweep"
-
-        /** `@label:` of the rubberband entry that carries the AutoMix pitch match. */
+        /** `@label:` of the rubberband entry that carries the pitch shift. */
         private const val PITCH_LABEL = "simpDjPitch"
 
         /**
@@ -775,13 +757,11 @@ class MpvPlayer private constructor(
     /** The audio output driver this handle actually opened — null until its audio has started. */
     fun currentAudioOutputDriver(): String? = if (isReleased) null else getPropertyString("current-ao")
 
-    // ================= DJ crossfade audio chain =================
+    // ================= Pitch shift audio chain =================
     //
-    // Android runs the sweep through `CrossfadeFilterAudioProcessor` and the tempo/pitch match
-    // through `PlaybackParameters`. Neither exists here, so both are expressed as mpv audio
-    // filters. Everything mpv-specific about that — filter names, the `af` string grammar,
-    // number formatting — is contained in this section; the adapter only ever speaks Hz and
-    // ratios, exactly as it does on Android.
+    // Android shifts pitch through `PlaybackParameters`. That does not exist here, so it is
+    // expressed as an mpv audio filter. Everything mpv-specific about that — filter names, the
+    // `af` string grammar, number formatting — is contained in this section.
 
     /**
      * What [installCrossfadeChain] actually got past mpv. The caller must not drive a stage that
@@ -789,54 +769,41 @@ class MpvPlayer private constructor(
      * animation step.
      */
     data class CrossfadeChain(
-        val sweep: Boolean,
         val pitchShift: Boolean,
     ) {
         companion object {
-            val NONE = CrossfadeChain(sweep = false, pitchShift = false)
+            val NONE = CrossfadeChain(pitchShift = false)
         }
     }
 
     /**
-     * Install the audio filter chain a DJ-style crossfade needs on this handle.
+     * Install the pitch-shift filter chain on this handle.
      *
      * Rebuilding the `af` chain is the expensive part (mpv drains and re-creates the filter
-     * graph), so it happens once here and the per-step updates go through `af-command`
-     * ([setCrossfadeCutoffHz] / [setPitchScale]) which retunes the live filters in place.
+     * graph), so it happens once here and later updates go through `af-command`
+     * ([setPitchScale]) which retunes the live filter in place.
      *
      * The chain is written as an `af` property string, v0.37.0 options.rst:1941
      * ``--af=<filter1[=parameter1:parameter2:...],filter2,...>``, with `@label:` prefixes per
      * v0.37.0 vf.rst:15 (*"Before the filter name, a label can be specified with ``@name:``"*)
      * so `af-command` can address each entry later.
      *
-     * @param sweep the filter sweep to arm, or null for none. Armed at [sweepStartHz] so the
-     *   chain is installed transparently (the sweep only bites once [setCrossfadeCutoffHz] runs).
      * @param pitchShift arms `rubberband` at its neutral `pitch-scale=1.0`. Required for
      *   [setPitchScale]; `speed` alone never moves pitch (see [setPitchScale]).
      * @return which parts mpv actually accepted — see [CrossfadeChain].
      */
-    fun installCrossfadeChain(
-        sweep: MpvCrossfadeFilter?,
-        sweepStartHz: Float,
-        pitchShift: Boolean,
-    ): CrossfadeChain {
+    fun installCrossfadeChain(pitchShift: Boolean): CrossfadeChain {
         if (isReleased) return CrossfadeChain.NONE
-        if (sweep == null && !pitchShift) {
+        if (!pitchShift) {
             clearAudioFilters()
             return CrossfadeChain.NONE
         }
-        if (applyCrossfadeChain(sweep, sweepStartHz, pitchShift)) {
-            return CrossfadeChain(sweep = sweep != null, pitchShift = pitchShift)
+        // librubberband is an OPTIONAL build-time dependency of libmpv — a bundled build for
+        // another platform may not have it, in which case mpv rejects the whole chain string.
+        if (applyCrossfadeChain(pitchShift)) {
+            return CrossfadeChain(pitchShift = pitchShift)
         }
-        // librubberband is an OPTIONAL build-time dependency of libmpv — this build reports
-        // "rubberband rubberband-3" among its features, but a bundled build for another platform
-        // may not have it, in which case mpv rejects the whole chain string. The lavfi biquads
-        // ship with every FFmpeg, so drop the pitch stage rather than lose the sweep as well.
-        if (pitchShift && sweep != null && applyCrossfadeChain(sweep, sweepStartHz, false)) {
-            Logger.w(TAG, "rubberband unavailable; crossfade keeps the filter sweep without pitch match")
-            return CrossfadeChain(sweep = true, pitchShift = false)
-        }
-        Logger.w(TAG, "Could not install the crossfade filter chain; falling back to a volume-only fade")
+        Logger.w(TAG, "Could not install the pitch filter chain")
         clearAudioFilters()
         return CrossfadeChain.NONE
     }
@@ -871,9 +838,7 @@ class MpvPlayer private constructor(
      *
      * Order is the design. The equalizer goes first so everything after it works on the curve the
      * user chose. The effects sit next, so echo and reverb act on the equalised signal rather than
-     * on one that is about to be re-shaped behind them. The crossfade sweep goes last so it also
-     * sweeps the effects' tails — a reverb that kept ringing at full brightness through a
-     * transition would be the one thing in the mix that refuses to fade.
+     * on one that is about to be re-shaped behind them. The pitch stage goes last.
      */
     private fun applyAudioFilters(): Boolean {
         val entries = listOfNotNull(eqEntry) + fxEntries + crossfadeEntries
@@ -902,8 +867,10 @@ class MpvPlayer private constructor(
                         val gain = bandsDb.getOrElse(index) { 0f }
                         "equalizer=f=$hz:width_type=q:width=1.41:g=${mpvNumber(gain)}"
                     }
-                // Wrapped in [ ] for the same reason the crossfade sweep is: the graph contains
-                // `,` and `=`, which mpv's own filter-list parser would otherwise consume.
+                // The graph is wrapped in [ ] because it contains `,` and `=`, which mpv's own
+                // filter-list parser would otherwise consume — v0.37.0 vf.rst:380
+                // ``--vf=lavfi=[gradfun=20:30,vflip]`` … *"The filter graph string is quoted with
+                // ``[`` and ``]``"*, and af.rst:243 repeats the requirement for the audio lavfi.
                 "@$EQ_LABEL:lavfi=[volume=${mpvNumber(preampDb)}dB,${stages.joinToString(",")}]"
             }
         return applyAudioFilters()
@@ -986,32 +953,16 @@ class MpvPlayer private constructor(
      *
      * `weights` is a runtime-settable AVOption of `amix`, so a mix drag retunes the graph in place
      * instead of tearing down and re-creating a partitioned convolution for every slider frame.
-     * Same call shape as [setCrossfadeCutoffHz], including the explicit target: mpv's lavfi graph
-     * also holds the `abuffer`/`abuffersink` endpoints, which answer any command with `ENOSYS`.
+     * `af-command <label> <command> <argument> [<target>]` (v0.37.0 input.rst:1313). The target is
+     * passed explicitly rather than defaulting to `all`: mpv's lavfi graph also holds the `abuffer`/`abuffersink` endpoints, which answer any command with `ENOSYS`.
      */
     fun setReverbMix(mix: Float): Boolean {
         if (isReleased) return false
         return command("af-command", FX_REVERB_LABEL, "weights", reverbWeights(mix), "amix")
     }
 
-    private fun applyCrossfadeChain(
-        sweep: MpvCrossfadeFilter?,
-        sweepStartHz: Float,
-        pitchShift: Boolean,
-    ): Boolean {
+    private fun applyCrossfadeChain(pitchShift: Boolean): Boolean {
         val entries = mutableListOf<String>()
-        if (sweep != null) {
-            // TWO cascaded 2-pole Butterworth stages = 4th order / 24 dB per octave, matching
-            // BiquadFilter on Android ("two cascaded Butterworth stages for 4th-order (24
-            // dB/octave) rolloff, matching professional DJ mixer filter steepness").
-            // width_type/width are spelled out rather than inherited from libavfilter's defaults.
-            val stage = "${sweep.lavfiName}=f=${mpvNumber(sweepStartHz)}:width_type=q:width=0.707"
-            // The graph is wrapped in [ ] because it contains `,` and `=`, which would otherwise
-            // be eaten by mpv's own filter-list parser — v0.37.0 vf.rst:380
-            // ``--vf=lavfi=[gradfun=20:30,vflip]`` … *"The filter graph string is quoted with
-            // ``[`` and ``]``"*, and af.rst:243 repeats the requirement for the audio lavfi.
-            entries += "@$SWEEP_LABEL:lavfi=[$stage,$stage]"
-        }
         if (pitchShift) {
             // v0.37.0 af.rst:196 ``pitch-scale=<amount>`` — *"Sets the pitch scaling factor.
             // Frequencies are multiplied by this value. (default: 1.0)"*.
@@ -1019,25 +970,6 @@ class MpvPlayer private constructor(
         }
         crossfadeEntries = entries
         return applyAudioFilters()
-    }
-
-    /**
-     * Retune the live sweep to [hz] without rebuilding the chain.
-     *
-     * `af-command <label> <command> <argument> [<target>]` (v0.37.0 input.rst:1313). `frequency`
-     * is a runtime-settable AVOption of libavfilter's biquad filters, so mpv forwards it straight
-     * to `avfilter_graph_send_command`.
-     *
-     * [target][MpvCrossfadeFilter.lavfiName] is passed explicitly rather than defaulting to `all`:
-     * mpv's lavfi graph also holds the `abuffer`/`abuffersink` endpoints, which answer any command
-     * with `ENOSYS` and would make an otherwise successful retune report failure.
-     */
-    fun setCrossfadeCutoffHz(
-        sweep: MpvCrossfadeFilter,
-        hz: Float,
-    ) {
-        if (isReleased) return
-        command("af-command", SWEEP_LABEL, "frequency", mpvNumber(hz), sweep.lavfiName)
     }
 
     /**
