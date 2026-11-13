@@ -13,7 +13,6 @@ import kotlinx.coroutines.withContext
 internal class CacheRepositoryImpl(
     private val playerCache: SimpleCache,
     private val downloadCache: SimpleCache,
-    private val canvasCache: SimpleCache,
 ) : CacheRepository {
     override suspend fun getCacheSize(cacheName: String): Long =
         when (cacheName) {
@@ -22,9 +21,6 @@ internal class CacheRepositoryImpl(
             }
             Config.DOWNLOAD_CACHE -> {
                 downloadCache.cacheSpace
-            }
-            Config.CANVAS_CACHE -> {
-                canvasCache.cacheSpace
             }
             else -> 0L
         }
@@ -41,11 +37,6 @@ internal class CacheRepositoryImpl(
                     downloadCache.removeResource(key)
                 }
             }
-            Config.CANVAS_CACHE -> {
-                canvasCache.keys.forEach { key ->
-                    canvasCache.removeResource(key)
-                }
-            }
             else -> { /* no-op */ }
         }
     }
@@ -57,9 +48,6 @@ internal class CacheRepositoryImpl(
             }
             Config.DOWNLOAD_CACHE -> {
                 downloadCache.keys.toList()
-            }
-            Config.CANVAS_CACHE -> {
-                canvasCache.keys.toList()
             }
             else -> emptyList()
         }

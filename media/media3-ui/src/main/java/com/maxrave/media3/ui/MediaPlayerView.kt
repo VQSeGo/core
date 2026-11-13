@@ -47,10 +47,6 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.FileDataSource
-import androidx.media3.datasource.cache.CacheDataSink
-import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -62,7 +58,6 @@ import coil3.compose.AsyncImage
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.crossfade
-import com.maxrave.common.Config
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.data.model.streams.TimeLine
 import com.maxrave.domain.data.model.ui.ScreenSizeInfo
@@ -88,8 +83,6 @@ fun MediaPlayerView(
     cropToBounds: Boolean = false,
     onFirstFrame: () -> Unit = {},
 ) {
-    val canvasCache: SimpleCache = koinInject<SimpleCache>(named(Config.CANVAS_CACHE))
-
     var widthPx by rememberSaveable {
         mutableIntStateOf(screenSize.wPX)
     }
@@ -121,20 +114,7 @@ fun MediaPlayerView(
     // Initialize ExoPlayer
     val exoPlayer =
         remember {
-            val cacheSink =
-                CacheDataSink
-                    .Factory()
-                    .setCache(canvasCache)
             val upstreamFactory = DefaultDataSource.Factory(context, DefaultHttpDataSource.Factory())
-            val downStreamFactory = FileDataSource.Factory()
-            val cacheDataSourceFactory =
-                CacheDataSource
-                    .Factory()
-                    .setCache(canvasCache)
-                    .setCacheWriteDataSinkFactory(cacheSink)
-                    .setCacheReadDataSourceFactory(downStreamFactory)
-                    .setUpstreamDataSourceFactory(upstreamFactory)
-                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
             ExoPlayer
                 .Builder(context)
                 .setLoadControl(
@@ -143,7 +123,7 @@ fun MediaPlayerView(
                         .setPrioritizeTimeOverSizeThresholds(false)
                         .build(),
                 ).setMediaSourceFactory(
-                    DefaultMediaSourceFactory(cacheDataSourceFactory),
+                    DefaultMediaSourceFactory(upstreamFactory),
                 ).build()
                 .apply {
                     addListener(playerListener)
