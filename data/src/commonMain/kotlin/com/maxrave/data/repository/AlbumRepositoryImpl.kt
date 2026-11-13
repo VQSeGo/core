@@ -5,7 +5,6 @@ import com.maxrave.data.extension.getFullDataFromDB
 import com.maxrave.data.mapping.toAlbumsResult
 import com.maxrave.data.parser.parseAlbumData
 import com.maxrave.domain.data.entities.AlbumEntity
-import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
 import com.maxrave.domain.data.model.browse.album.AlbumBrowse
 import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
 import com.maxrave.domain.repository.AlbumRepository
@@ -77,29 +76,10 @@ internal class AlbumRepositoryImpl(
         )
     }
 
-    override suspend fun insertFollowedArtistSingleAndAlbum(followedArtistSingleAndAlbum: FollowedArtistSingleAndAlbum) =
-        withContext(Dispatchers.IO) {
-            localDataSource.insertFollowedArtistSingleAndAlbum(followedArtistSingleAndAlbum)
-        }
-
     override suspend fun deleteFollowedArtistSingleAndAlbum(channelId: String) =
         withContext(Dispatchers.IO) {
             localDataSource.deleteFollowedArtistSingleAndAlbum(channelId)
         }
-
-    override suspend fun getAllFollowedArtistSingleAndAlbums(): Flow<List<FollowedArtistSingleAndAlbum>?> =
-        flow {
-            val list =
-                getFullDataFromDB { limit, offset ->
-                    localDataSource.getAllFollowedArtistSingleAndAlbums(limit, offset)
-                }
-            emit(list)
-        }.flowOn(Dispatchers.IO)
-
-    override suspend fun getFollowedArtistSingleAndAlbum(channelId: String): Flow<FollowedArtistSingleAndAlbum?> =
-        flow {
-            emit(localDataSource.getFollowedArtistSingleAndAlbum(channelId))
-        }.flowOn(Dispatchers.IO)
 
     override fun getAlbumData(browseId: String): Flow<Resource<AlbumBrowse>> =
         flow {

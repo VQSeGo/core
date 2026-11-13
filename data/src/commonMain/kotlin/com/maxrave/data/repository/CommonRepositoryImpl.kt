@@ -3,7 +3,6 @@ package com.maxrave.data.repository
 import com.maxrave.data.db.MusicDatabase
 import com.maxrave.data.db.datasource.LocalDataSource
 import com.maxrave.data.io.fileSystem
-import com.maxrave.domain.data.entities.NotificationEntity
 import com.maxrave.domain.data.model.cookie.CookieItem
 import com.maxrave.domain.data.model.library.LibraryCollectionPreview
 import com.maxrave.domain.data.model.library.LibraryOverview
@@ -344,27 +343,6 @@ internal class CommonRepositoryImpl(
         count: Flow<Int>,
         thumbnails: Flow<List<String?>>,
     ): Flow<LibraryCollectionPreview> = combine(count, thumbnails) { n, urls -> LibraryCollectionPreview(n, urls.filterNotNull()) }
-
-    // Notifications
-    override suspend fun insertNotification(notificationEntity: NotificationEntity) =
-        withContext(Dispatchers.IO) {
-            localDataSource.insertNotification(notificationEntity)
-        }
-
-    override suspend fun getAllNotifications(): Flow<List<NotificationEntity>?> =
-        flow {
-            emit(localDataSource.getAllNotification())
-        }.flowOn(Dispatchers.IO)
-
-    override suspend fun isNotificationExists(link: String): Boolean =
-        withContext(Dispatchers.IO) {
-            localDataSource.countNotificationByLink(link) > 0
-        }
-
-    override suspend fun deleteNotification(id: Long) =
-        withContext(Dispatchers.IO) {
-            localDataSource.deleteNotification(id)
-        }
 
     override suspend fun writeTextToFile(
         text: String,

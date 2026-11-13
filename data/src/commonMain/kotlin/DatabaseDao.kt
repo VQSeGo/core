@@ -14,13 +14,11 @@ import com.maxrave.domain.data.entities.AutoEqCurveEntity
 import com.maxrave.domain.data.entities.AutoEqEntryEntity
 import com.maxrave.domain.data.entities.AutoEqIndexMetaEntity
 import com.maxrave.domain.data.entities.EpisodeEntity
-import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
 import com.maxrave.domain.data.entities.LyricsOffsetEntity
 import com.maxrave.domain.data.entities.GoogleAccountEntity
 import com.maxrave.domain.data.entities.LocalPlaylistEntity
 import com.maxrave.domain.data.entities.LyricsEntity
 import com.maxrave.domain.data.entities.NewFormatEntity
-import com.maxrave.domain.data.entities.NotificationEntity
 import com.maxrave.domain.data.entities.PairSongLocalPlaylist
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.PodcastWithEpisodes
@@ -1052,32 +1050,8 @@ interface DatabaseDao {
         inLibrary: LocalDateTime,
     )
 
-    @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
-    suspend fun insertFollowedArtistSingleAndAlbum(followedArtistSingleAndAlbum: FollowedArtistSingleAndAlbum)
-
-    @Query("SELECT * FROM followed_artist_single_and_album WHERE channelId = :channelId")
-    suspend fun getFollowedArtistSingleAndAlbum(channelId: String): FollowedArtistSingleAndAlbum?
-
     @Query("DELETE FROM followed_artist_single_and_album WHERE channelId = :channelId")
     suspend fun deleteFollowedArtistSingleAndAlbum(channelId: String)
-
-    @Query("SELECT * FROM followed_artist_single_and_album LIMIT :limit OFFSET :offset")
-    suspend fun getAllFollowedArtistSingleAndAlbum(
-        limit: Int,
-        offset: Int,
-    ): List<FollowedArtistSingleAndAlbum>
-
-    @Insert
-    suspend fun insertNotification(notificationEntity: NotificationEntity)
-
-    @Query("SELECT * FROM notification ORDER BY time DESC LIMIT 100")
-    suspend fun getAllNotification(): List<NotificationEntity>
-
-    @Query("SELECT COUNT(*) FROM notification WHERE link = :link")
-    suspend fun countNotificationByLink(link: String): Int
-
-    @Query("DELETE FROM notification WHERE id = :id")
-    suspend fun deleteNotification(id: Long)
 
     @Query("DELETE FROM notification WHERE channelId = :channelId")
     suspend fun deleteNotificationsByChannelId(channelId: String)

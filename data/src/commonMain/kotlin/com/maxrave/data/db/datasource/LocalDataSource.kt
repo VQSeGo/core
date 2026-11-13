@@ -9,13 +9,11 @@ import com.maxrave.domain.data.entities.AutoEqCurveEntity
 import com.maxrave.domain.data.entities.AutoEqEntryEntity
 import com.maxrave.domain.data.entities.AutoEqIndexMetaEntity
 import com.maxrave.domain.data.entities.EpisodeEntity
-import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
 import com.maxrave.domain.data.entities.GoogleAccountEntity
 import com.maxrave.domain.data.entities.LocalPlaylistEntity
 import com.maxrave.domain.data.entities.LyricsEntity
 import com.maxrave.domain.data.entities.LyricsOffsetEntity
 import com.maxrave.domain.data.entities.NewFormatEntity
-import com.maxrave.domain.data.entities.NotificationEntity
 import com.maxrave.domain.data.entities.PairSongLocalPlaylist
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.PodcastsEntity
@@ -659,28 +657,7 @@ internal class LocalDataSource(
         inLibrary: LocalDateTime,
     ) = databaseDao.setInLibrary(videoId, inLibrary)
 
-    suspend fun insertFollowedArtistSingleAndAlbum(followedArtistSingleAndAlbum: FollowedArtistSingleAndAlbum) =
-        databaseDao.insertFollowedArtistSingleAndAlbum(followedArtistSingleAndAlbum)
-
     suspend fun deleteFollowedArtistSingleAndAlbum(channelId: String) = databaseDao.deleteFollowedArtistSingleAndAlbum(channelId)
-
-    suspend fun getFollowedArtistSingleAndAlbum(channelId: String) = databaseDao.getFollowedArtistSingleAndAlbum(channelId)
-
-    suspend fun getAllFollowedArtistSingleAndAlbums(
-        limit: Int,
-        offset: Int,
-    ) = databaseDao.getAllFollowedArtistSingleAndAlbum(
-        limit,
-        offset,
-    )
-
-    suspend fun insertNotification(notificationEntity: NotificationEntity) = databaseDao.insertNotification(notificationEntity)
-
-    suspend fun getAllNotification() = databaseDao.getAllNotification()
-
-    suspend fun countNotificationByLink(link: String) = databaseDao.countNotificationByLink(link)
-
-    suspend fun deleteNotification(id: Long) = databaseDao.deleteNotification(id)
 
     suspend fun deleteNotificationsByChannelId(channelId: String) = databaseDao.deleteNotificationsByChannelId(channelId)
 

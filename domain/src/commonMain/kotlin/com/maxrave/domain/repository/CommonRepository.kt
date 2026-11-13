@@ -1,6 +1,5 @@
 package com.maxrave.domain.repository
 
-import com.maxrave.domain.data.entities.NotificationEntity
 import com.maxrave.domain.data.model.cookie.CookieItem
 import com.maxrave.domain.data.model.library.LibraryOverview
 import com.maxrave.domain.data.type.RecentlyType
@@ -22,15 +21,6 @@ interface CommonRepository {
 
     /** Counts and newest artwork for the Your library cards; re-emits whenever any of them changes. */
     fun getLibraryOverview(): Flow<LibraryOverview>
-
-    // Notifications
-    suspend fun insertNotification(notificationEntity: NotificationEntity)
-
-    suspend fun getAllNotifications(): Flow<List<NotificationEntity>?>
-
-    suspend fun isNotificationExists(link: String): Boolean
-
-    suspend fun deleteNotification(id: Long)
 
     suspend fun writeTextToFile(text: String, filePath: String): Boolean
 

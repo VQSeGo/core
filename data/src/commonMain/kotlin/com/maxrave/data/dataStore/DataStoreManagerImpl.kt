@@ -1744,19 +1744,6 @@ internal class DataStoreManagerImpl(
         }
     }
 
-    override val blogNotificationEnabled: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[BLOG_NOTIFICATION_ENABLED] ?: TRUE
-        }
-
-    override suspend fun setBlogNotificationEnabled(enabled: Boolean) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[BLOG_NOTIFICATION_ENABLED] = if (enabled) TRUE else FALSE
-            }
-        }
-    }
-
     // Auto Backup
     override val autoBackupEnabled: Flow<String> =
         settingsDataStore.data.map { preferences ->
@@ -1935,7 +1922,6 @@ internal class DataStoreManagerImpl(
 
         val LOCAL_TRACKING_ENABLED = stringPreferencesKey("local_tracking_enabled")
 
-        val BLOG_NOTIFICATION_ENABLED = stringPreferencesKey("blog_notification_enabled")
 
         // Auto Backup
         val AUTO_BACKUP_ENABLED = stringPreferencesKey("auto_backup_enabled")

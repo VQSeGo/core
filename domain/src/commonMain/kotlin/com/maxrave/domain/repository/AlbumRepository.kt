@@ -1,7 +1,6 @@
 package com.maxrave.domain.repository
 
 import com.maxrave.domain.data.entities.AlbumEntity
-import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
 import com.maxrave.domain.data.model.browse.album.AlbumBrowse
 import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
 import com.maxrave.domain.utils.Resource
@@ -34,13 +33,7 @@ interface AlbumRepository {
         downloadState: Int,
     )
 
-    suspend fun insertFollowedArtistSingleAndAlbum(followedArtistSingleAndAlbum: FollowedArtistSingleAndAlbum)
-
     suspend fun deleteFollowedArtistSingleAndAlbum(channelId: String)
-
-    suspend fun getAllFollowedArtistSingleAndAlbums(): Flow<List<FollowedArtistSingleAndAlbum>?>
-
-    suspend fun getFollowedArtistSingleAndAlbum(channelId: String): Flow<FollowedArtistSingleAndAlbum?>
 
     fun getAlbumData(browseId: String): Flow<Resource<AlbumBrowse>>
 
