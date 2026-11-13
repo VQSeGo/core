@@ -247,6 +247,13 @@ interface MediaPlayerInterface {
      */
     suspend fun loadWaveform(mediaId: String): FloatArray? = null
 
+    /**
+     * Whether [mediaId] can start without the network: a finished download, or (Android) audio
+     * already cached whole. A disk check, not a network one. When a track cannot be played, the
+     * handler uses it to skip straight to the next track that will play rather than trying each.
+     */
+    fun isLocallyPlayable(mediaId: String): Boolean = false
+
     // Listener management
     fun addListener(listener: MediaPlayerListener)
 

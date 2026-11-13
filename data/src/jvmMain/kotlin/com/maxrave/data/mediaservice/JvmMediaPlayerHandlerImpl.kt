@@ -238,6 +238,7 @@ class JvmMediaPlayerHandlerImpl(
 
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
+    private val unplayableTrackSkipper = UnplayableTrackSkipper()
     override var pushPlayerError: (PlayerError) -> Unit = {}
     private val _simpleMediaState = MutableStateFlow<SimpleMediaState>(SimpleMediaState.Initial)
     override val simpleMediaState: StateFlow<SimpleMediaState> = _simpleMediaState.asStateFlow()
@@ -2695,6 +2696,7 @@ class JvmMediaPlayerHandlerImpl(
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         _controlState.value = _controlState.value.copy(isPlaying = isPlaying)
         if (isPlaying) {
+            unplayableTrackSkipper.onPlaying()
             startProgressUpdate()
             nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
         } else {
@@ -2831,28 +2833,25 @@ class JvmMediaPlayerHandlerImpl(
 
     override fun onPlayerError(error: PlayerError) {
         Logger.i("Offline", "error ${player.currentMediaItem?.mediaId} ${error.errorCode} ${error.errorCodeName}")
-        when (error.errorCode) {
-            PlayerConstants.ERROR_CODE_TIMEOUT -> {
-                Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")
-//                if (isAppInForeground()) {
-                showToast(ToastType.PlayerError(error.errorCodeName))
-//                } else {
-//                    Logger.w("Player Error", "App is not in foreground, skipping toast")
-//                }
-                player.pause()
+        Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")
+        if (error.errorCode != PlayerConstants.ERROR_CODE_TIMEOUT) pushPlayerError(error)
+        // A track that cannot play moves the queue on rather than pausing it: offline, the
+        // downloaded tracks further down still play. Same rules as the other platform's handler.
+        when (val step = unplayableTrackSkipper.onError(player)) {
+            UnplayableTrackSkipper.Step.Stay -> Unit
+            is UnplayableTrackSkipper.Step.Skip -> {
+                if (step.announce) showPlayerErrorToast(error)
+                player.seekTo(step.index, 0)
             }
-
-            else -> {
-                Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")
-                pushPlayerError(error)
-//                if (isAppInForeground()) {
-                showToast(ToastType.PlayerError(error.errorCodeName))
-//                } else {
-//                    Logger.w("Player Error", "App is not in foreground, skipping toast")
-//                }
+            UnplayableTrackSkipper.Step.Stop -> {
+                showPlayerErrorToast(error)
                 player.pause()
             }
         }
+    }
+
+    private fun showPlayerErrorToast(error: PlayerError) {
+        showToast(ToastType.PlayerError(error.errorCodeName))
     }
 
     override fun onShuffleModeEnabledChanged(

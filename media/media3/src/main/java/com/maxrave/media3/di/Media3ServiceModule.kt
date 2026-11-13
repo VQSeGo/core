@@ -209,6 +209,8 @@ private val mediaServiceModule =
                 audioAttributes = get(),
                 streamRepository = get(),
                 waveformReader = get(),
+                downloadCache = get(named(DOWNLOAD_CACHE)),
+                playerCache = get(named(PLAYER_CACHE)),
             )
         }
 

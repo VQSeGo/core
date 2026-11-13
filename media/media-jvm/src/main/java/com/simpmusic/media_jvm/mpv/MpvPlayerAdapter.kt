@@ -337,6 +337,14 @@ class MpvPlayerAdapter(
                     cachedIsLoading = false
                 }
 
+                InternalState.ERROR -> {
+                    // The track failed to load and nothing is left to unpause: load it again. If
+                    // it fails again the handler, seeing Play was asked for, moves on.
+                    Logger.d(TAG, "Play: retrying the track that failed")
+                    internalPlayWhenReady = true
+                    seekTo(localCurrentMediaItemIndex, cachedPosition.coerceAtLeast(0L))
+                }
+
                 else -> {
                     Logger.w(TAG, "Play: Called in invalid state: $internalState")
                 }
@@ -1372,7 +1380,10 @@ class MpvPlayerAdapter(
      * JvmMediaPlayerHandlerImpl uses thread-safe StateFlow updates
      * and contains runBlocking calls that would deadlock on Main.
      */
-    private fun transitionToState(newState: InternalState) {
+    private fun transitionToState(
+        newState: InternalState,
+        error: PlayerError? = null,
+    ) {
         if (internalState == newState) return
 
         val oldState = internalState
@@ -1438,15 +1449,16 @@ class MpvPlayerAdapter(
             InternalState.ERROR -> {
                 listeners.forEach { it.onPlaybackStateChanged(PlayerConstants.STATE_IDLE) }
                 listeners.forEach { it.onIsPlayingChanged(false) }
-                listeners.forEach {
-                    it.onPlayerError(
-                        PlayerError(
-                            errorCode = 403,
-                            errorCodeName = "ERROR_UNKNOWN",
-                            message = "Can not extract playable URL or playback error",
-                        ),
+                // One failure, one report: a caller that knows what went wrong passes it here
+                // instead of reporting it too. Two reports used to mean two toasts, and now
+                // would mean two skips.
+                val reported =
+                    error ?: PlayerError(
+                        errorCode = 403,
+                        errorCodeName = "ERROR_UNKNOWN",
+                        message = "Can not extract playable URL or playback error",
                     )
-                }
+                listeners.forEach { it.onPlayerError(reported) }
             }
         }
     }
@@ -1704,8 +1716,7 @@ class MpvPlayerAdapter(
                                 errorCodeName = "MPV_ERROR",
                                 message = "Playback error",
                             )
-                        listeners.forEach { it.onPlayerError(error) }
-                        transitionToState(InternalState.ERROR)
+                        transitionToState(InternalState.ERROR, error)
                     }
                 }
 
@@ -2719,6 +2730,8 @@ class MpvPlayerAdapter(
      */
     private fun downloadedFile(videoId: String): File? =
         File(getDownloadPath(), "$videoId.webm").takeIf { it.isFile && it.length() > 0 }
+
+    override fun isLocallyPlayable(mediaId: String): Boolean = downloadedFile(mediaId) != null
 
     private suspend fun extractPlayableUrl(mediaItem: GenericMediaItem): PlayableSource? {
         Logger.w(TAG, "Extracting playable URL for ${mediaItem.mediaId}")

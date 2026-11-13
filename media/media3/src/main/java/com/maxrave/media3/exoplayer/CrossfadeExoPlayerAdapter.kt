@@ -16,6 +16,7 @@ import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
@@ -40,6 +41,7 @@ import com.maxrave.media3.audio.EchoAudioProcessor
 import com.maxrave.media3.audio.EqualizerAudioProcessor
 import com.maxrave.media3.audio.EqualizerCurve
 import com.maxrave.media3.audio.SleepFadeAudioProcessor
+import com.maxrave.media3.extension.isFullyCached
 import com.maxrave.media3.service.mediasourcefactory.isLiveStreamDetected
 import com.maxrave.media3.service.mediasourcefactory.MergingMediaSourceFactory
 import kotlinx.coroutines.CancellationException
@@ -85,6 +87,8 @@ internal class CrossfadeExoPlayerAdapter(
     private val audioAttributes: AudioAttributes,
     private val streamRepository: StreamRepository,
     private val waveformReader: WaveformReader,
+    private val downloadCache: SimpleCache,
+    private val playerCache: SimpleCache,
 ) : MediaPlayerInterface {
     // ========== Internal State Enum (same as GstreamerPlayerAdapter) ==========
 
@@ -317,6 +321,10 @@ internal class CrossfadeExoPlayerAdapter(
     override fun selectAudioOutput(id: String?) = outputRouter.select(id)
 
     override suspend fun loadWaveform(mediaId: String): FloatArray? = waveformReader.read(mediaId)
+
+    // The same check the stream resolver makes before it goes to the network, keyed the same way.
+    override fun isLocallyPlayable(mediaId: String): Boolean =
+        downloadCache.isFullyCached(mediaId, 0L) || playerCache.isFullyCached(mediaId, 0L)
 
     override fun refreshAudioOutputs() = outputRouter.refresh()
 
@@ -626,6 +634,14 @@ internal class CrossfadeExoPlayerAdapter(
                 InternalState.PLAYING -> {
                     internalPlayWhenReady = true
                     cachedIsLoading = false
+                }
+
+                InternalState.ERROR -> {
+                    // The track failed to load and nothing is left to unpause: load it again. If
+                    // it fails again the handler, seeing Play was asked for, moves on.
+                    Logger.d(TAG, "Play: retrying the track that failed")
+                    internalPlayWhenReady = true
+                    seekTo(localCurrentMediaItemIndex, cachedPosition.coerceAtLeast(0L))
                 }
 
                 else -> {
@@ -1500,11 +1516,13 @@ internal class CrossfadeExoPlayerAdapter(
                 message = error.message,
             )
         Logger.e(TAG, "Playback error: ${error.message}")
-        listeners.forEach { it.onPlayerError(genericError) }
-        transitionToState(InternalState.ERROR)
+        transitionToState(InternalState.ERROR, genericError)
     }
 
-    private fun transitionToState(newState: InternalState) {
+    private fun transitionToState(
+        newState: InternalState,
+        error: PlayerError? = null,
+    ) {
         if (internalState == newState) {
             Logger.d(TAG, "State transition ignored: already in $newState")
             return
@@ -1562,15 +1580,16 @@ internal class CrossfadeExoPlayerAdapter(
             InternalState.ERROR -> {
                 listeners.forEach { it.onPlaybackStateChanged(PlayerConstants.STATE_IDLE) }
                 listeners.forEach { it.onIsPlayingChanged(false) }
-                listeners.forEach {
-                    it.onPlayerError(
-                        PlayerError(
-                            errorCode = 403,
-                            errorCodeName = "ERROR_UNKNOWN",
-                            message = "Can not extract playable URL or playback error",
-                        ),
+                // One failure, one report: a caller that knows what went wrong passes it here
+                // instead of reporting it too. Two reports used to mean two toasts, and now
+                // would mean two skips.
+                val reported =
+                    error ?: PlayerError(
+                        errorCode = 403,
+                        errorCodeName = "ERROR_UNKNOWN",
+                        message = "Can not extract playable URL or playback error",
                     )
-                }
+                listeners.forEach { it.onPlayerError(reported) }
             }
         }
     }
