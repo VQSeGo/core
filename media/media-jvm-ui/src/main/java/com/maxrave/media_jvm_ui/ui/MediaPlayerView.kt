@@ -93,7 +93,7 @@ fun MediaPlayerViewWithUrl(
         mpvPlayer?.setPanscan(if (cropToBounds) 1.0 else 0.0)
     }
 
-    // No window on screen: pause the loop instead of decoding frames nobody sees. A canvas has no
+    // No window on screen: pause the loop instead of decoding frames nobody sees. A muted loop has no
     // audio, so MpvPlayer.setVideoSuspended would leave mpv nothing to play and it would end the file.
     LaunchedEffect(mpvPlayer) {
         val player = mpvPlayer ?: return@LaunchedEffect

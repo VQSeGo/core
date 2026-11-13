@@ -762,7 +762,7 @@ class MpvPlayer private constructor(
      * selects it again. Simply not rendering frames would not work: vo_libmpv waits up to 200 ms
      * for each frame to be rendered (`flip_page`), which stalls video playback instead of idling it.
      *
-     * Only for handles that also carry audio. A video-only handle (a canvas) left with no track
+     * Only for handles that also carry audio. A video-only handle (a muted loop) left with no track
      * would have nothing to play and end the file — pause those instead.
      */
     fun setVideoSuspended(suspended: Boolean) {
