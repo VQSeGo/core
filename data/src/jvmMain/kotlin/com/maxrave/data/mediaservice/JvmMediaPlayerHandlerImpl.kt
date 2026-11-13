@@ -1869,7 +1869,7 @@ class JvmMediaPlayerHandlerImpl(
                     )
             if (track.artists.isNullOrEmpty()) {
                 songRepository
-                    .getSongInfo(track.videoId)
+                    .getSongInfoEntity(track.videoId)
                     .lastOrNull()
                     .let { songInfo ->
                         if (songInfo != null) {
@@ -2014,7 +2014,7 @@ class JvmMediaPlayerHandlerImpl(
                         )
                 if (downloaded == 1) {
                     if (track.artists.isNullOrEmpty()) {
-                        songRepository.getSongInfo(track.videoId).lastOrNull().let { songInfo ->
+                        songRepository.getSongInfoEntity(track.videoId).lastOrNull().let { songInfo ->
                             if (songInfo != null) {
                                 val mediaItem =
                                     GenericMediaItem(
@@ -2088,7 +2088,7 @@ class JvmMediaPlayerHandlerImpl(
                     val artistName: String = track.artists.toListName().connectArtists()
                     if (track.artists.isNullOrEmpty()) {
                         songRepository
-                            .getSongInfo(track.videoId)
+                            .getSongInfoEntity(track.videoId)
                             .cancellable()
                             .lastOrNull()
                             .let { songInfo ->
@@ -2231,7 +2231,7 @@ class JvmMediaPlayerHandlerImpl(
                 )
         if ((player.currentMediaItemIndex + 1 in 0..queueData.value.data.listTracks.size)) {
             if (track.artists.isNullOrEmpty()) {
-                songRepository.getSongInfo(track.videoId).cancellable().lastOrNull().let { songInfo ->
+                songRepository.getSongInfoEntity(track.videoId).cancellable().lastOrNull().let { songInfo ->
                     if (songInfo != null) {
                         val withArtist =
                             track.copy(
