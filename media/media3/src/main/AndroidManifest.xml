@@ -1,3 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- MusicDownloadService.getScheduler() hands JobScheduler this service to restart queued
+             downloads once the network is back. Undeclared, the schedule() call that runs whenever a
+             download is waiting without network throws and takes the app down. -->
+        <service
+            android:name="androidx.media3.exoplayer.scheduler.PlatformScheduler$PlatformSchedulerService"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+    </application>
 </manifest>
