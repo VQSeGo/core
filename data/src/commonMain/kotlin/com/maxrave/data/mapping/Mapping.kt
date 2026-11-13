@@ -2,10 +2,6 @@ package com.maxrave.data.mapping
 
 import com.maxrave.data.parser.toListThumbnail
 import com.maxrave.domain.data.model.browse.album.Track
-import com.maxrave.domain.data.model.comments.CommentLikeState
-import com.maxrave.domain.data.model.comments.YouTubeComment
-import com.maxrave.domain.data.model.comments.YouTubeCommentsHeader
-import com.maxrave.domain.data.model.comments.YouTubeCommentsPage
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.metadata.Line
 import com.maxrave.domain.data.model.metadata.Lyrics
@@ -31,8 +27,6 @@ import com.maxrave.kotlinytmusicscraper.models.YTItem
 import com.maxrave.kotlinytmusicscraper.models.response.PipedResponse
 import com.maxrave.kotlinytmusicscraper.models.youtube.Transcript
 import com.maxrave.kotlinytmusicscraper.models.youtube.YouTubeInitialPage
-import com.maxrave.kotlinytmusicscraper.pages.CommentItem
-import com.maxrave.kotlinytmusicscraper.pages.CommentsPage
 import com.maxrave.spotify.model.response.spotify.SpotifyLyricsResponse
 import org.simpmusic.lyrics.models.response.LyricsResponse
 import org.simpmusic.lyrics.models.response.TranslatedLyricsResponse
@@ -565,46 +559,4 @@ internal fun YTItem.toHomeContent(): Content =
             )
         }
     }
-
-internal fun CommentItem.toYouTubeComment(): YouTubeComment =
-    YouTubeComment(
-        id = id,
-        author = author,
-        authorAvatar = authorAvatar,
-        authorChannelId = authorChannelId,
-        isVerified = isVerified,
-        isCreator = isCreator,
-        text = text,
-        publishedTime = publishedTime,
-        likeCount = likeCount,
-        likeCountLiked = likeCountLiked,
-        likeState = CommentLikeState.valueOf(likeState.name),
-        isHearted = isHearted,
-        isPinned = isPinned,
-        repliesLabel = repliesLabel,
-        repliesToken = repliesToken,
-        likeAction = likeAction,
-        unlikeAction = unlikeAction,
-        dislikeAction = dislikeAction,
-        undislikeAction = undislikeAction,
-        replyParams = replyParams,
-        replyPlaceholder = replyPlaceholder,
-    )
-
-internal fun CommentsPage.toYouTubeCommentsPage(): YouTubeCommentsPage =
-    YouTubeCommentsPage(
-        header =
-            header?.let {
-                YouTubeCommentsHeader(
-                    countText = it.countText,
-                    countShort = it.countShort,
-                    createParams = it.createParams,
-                    placeholder = it.placeholder,
-                    userAvatar = it.userAvatar,
-                )
-            },
-        comments = comments.map { it.toYouTubeComment() },
-        nextToken = nextToken,
-        nextLabel = nextLabel,
-    )
 
