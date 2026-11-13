@@ -92,28 +92,4 @@ interface LyricsCanvasRepository {
         videoId: String,
         language: String,
     ): Flow<Resource<Lyrics>>
-
-    fun voteSimpMusicLyrics(
-        lyricsId: String,
-        upvote: Boolean,
-    ): Flow<Resource<String>>
-
-    fun voteSimpMusicTranslatedLyrics(
-        translatedLyricsId: String,
-        upvote: Boolean,
-    ): Flow<Resource<String>>
-
-    fun insertSimpMusicLyrics(
-        dataStoreManager: DataStoreManager,
-        track: Track,
-        duration: Int,
-        lyrics: Lyrics,
-    ): Flow<Resource<String>>
-
-    fun insertSimpMusicTranslatedLyrics(
-        dataStoreManager: DataStoreManager,
-        track: Track,
-        translatedLyrics: Lyrics,
-        language: String,
-    ): Flow<Resource<String>>
 }

@@ -7,7 +7,6 @@ import com.maxrave.data.mapping.toCanvasResult
 import com.maxrave.data.mapping.toLyrics
 import com.maxrave.domain.data.entities.LyricsEntity
 import com.maxrave.domain.data.entities.TranslatedLyricsEntity
-import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.browse.artist.ArtistEditorial
 import com.maxrave.domain.data.model.browse.artist.ArtistLogo
 import com.maxrave.domain.data.model.browse.artist.ArtistMotion
@@ -18,12 +17,6 @@ import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.LyricsCanvasRepository
 import com.maxrave.domain.utils.Resource
-import com.maxrave.domain.utils.connectArtists
-import com.maxrave.domain.utils.toListName
-import com.maxrave.domain.utils.toPlainLrcString
-import com.maxrave.domain.utils.toRichSyncLrcString
-import com.maxrave.domain.utils.toSyncedLrcString
-import com.maxrave.domain.utils.toSyncedLyrics
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.logger.Logger
 import com.maxrave.spotify.Spotify
@@ -45,8 +38,6 @@ import org.simpmusic.lyrics.am.AMEditorialVideo
 import org.simpmusic.lyrics.am.AMMotionVideo
 import org.simpmusic.lyrics.am.AMSongWithAlbum
 import org.simpmusic.lyrics.am.toImageUrl
-import org.simpmusic.lyrics.models.request.LyricsBody
-import org.simpmusic.lyrics.models.request.TranslatedLyricsBody
 import org.simpmusic.lyrics.parser.parseTtmlLyrics
 import kotlin.math.abs
 import kotlin.time.Clock
@@ -760,122 +751,6 @@ internal class LyricsCanvasRepositoryImpl(
                 }
         }.flowOn(Dispatchers.IO)
 
-    override fun voteSimpMusicLyrics(
-        lyricsId: String,
-        upvote: Boolean,
-    ): Flow<Resource<String>> =
-        flow {
-            simpMusicLyrics
-                .voteLyrics(lyricsId, upvote)
-                .onSuccess {
-                    Logger.d(simpMusicLyricsTag, "Vote Lyrics Success: $it")
-                    emit(Resource.Success(it.id))
-                }.onFailure {
-                    Logger.e(simpMusicLyricsTag, "Vote Lyrics Error: ${it.message}")
-                    emit(Resource.Error<String>(it.message ?: "Failed to vote lyrics"))
-                }
-        }.flowOn(Dispatchers.IO)
-
-    override fun voteSimpMusicTranslatedLyrics(
-        translatedLyricsId: String,
-        upvote: Boolean,
-    ): Flow<Resource<String>> =
-        flow {
-            simpMusicLyrics
-                .voteTranslatedLyrics(translatedLyricsId, upvote)
-                .onSuccess {
-                    Logger.d(simpMusicLyricsTag, "Vote Translated Lyrics Success: $it")
-                    emit(Resource.Success(it.id))
-                }.onFailure {
-                    Logger.e(simpMusicLyricsTag, "Vote Translated Lyrics Error: ${it.message}")
-                    emit(Resource.Error<String>(it.message ?: "Failed to vote translated lyrics"))
-                }
-        }.flowOn(Dispatchers.IO)
-
-    override fun insertSimpMusicLyrics(
-        dataStoreManager: DataStoreManager,
-        track: Track,
-        duration: Int,
-        lyrics: Lyrics,
-    ): Flow<Resource<String>> =
-        flow {
-            if (lyrics.lines.isNullOrEmpty()) {
-                emit(
-                    Resource.Error<String>("Lyrics are empty"),
-                )
-                return@flow
-            }
-            val syncedLyric =
-                if (lyrics.syncType == "LINE_SYNCED") {
-                    lyrics.toSyncedLrcString()
-                } else if (lyrics.syncType == "RICH_SYNCED") {
-                    lyrics.toSyncedLyrics().toSyncedLrcString()
-                } else {
-                    null
-                }
-            val richSyncedLyric =
-                if (lyrics.syncType == "RICH_SYNCED") {
-                    lyrics.toRichSyncLrcString()
-                } else {
-                    null
-                }
-            val (contributorName, contributorEmail) = dataStoreManager.contributorName.first() to dataStoreManager.contributorEmail.first()
-            simpMusicLyrics
-                .insertLyrics(
-                    LyricsBody(
-                        videoId = track.videoId,
-                        songTitle = track.title,
-                        artistName = track.artists?.toListName()?.connectArtists() ?: "",
-                        albumName = track.album?.name ?: "",
-                        durationSeconds = duration,
-                        plainLyric = lyrics.toPlainLrcString() ?: "",
-                        syncedLyrics = syncedLyric,
-                        richSyncLyrics = richSyncedLyric,
-                        contributor = contributorName,
-                        contributorEmail = contributorEmail,
-                        trackType = if (track.thumbnails?.firstOrNull()?.let { it.width == it.height && it.width > 0 } == true) "SONG" else "VIDEO",
-                    ),
-                ).onSuccess {
-                    Logger.d(simpMusicLyricsTag, "Inserted Lyrics: $it")
-                    emit(Resource.Success(it.id))
-                }.onFailure {
-                    Logger.e(simpMusicLyricsTag, "Insert Lyrics Error: ${it.message}")
-                    emit(Resource.Error<String>(it.message ?: "Failed to insert lyrics"))
-                }
-        }.flowOn(Dispatchers.IO)
-
-    override fun insertSimpMusicTranslatedLyrics(
-        dataStoreManager: DataStoreManager,
-        track: Track,
-        translatedLyrics: Lyrics,
-        language: String,
-    ): Flow<Resource<String>> =
-        flow {
-            val syncedLyrics = translatedLyrics.toSyncedLrcString()
-            if (translatedLyrics.lines.isNullOrEmpty() || syncedLyrics == null || language.length != 2) {
-                emit(
-                    Resource.Error<String>("Lyrics are empty"),
-                )
-                return@flow
-            }
-            val (contributorName, contributorEmail) = dataStoreManager.contributorName.first() to dataStoreManager.contributorEmail.first()
-            simpMusicLyrics
-                .insertTranslatedLyrics(
-                    TranslatedLyricsBody(
-                        videoId = track.videoId,
-                        translatedLyric = syncedLyrics,
-                        language = language,
-                        contributor = contributorName,
-                        contributorEmail = contributorEmail,
-                    ),
-                ).onSuccess {
-                    Logger.d(simpMusicLyricsTag, "Inserted Translated Lyrics: $it")
-                    emit(Resource.Success(it.id))
-                }.onFailure {
-                    Logger.e(simpMusicLyricsTag, "Insert Translated Lyrics Error: ${it.message}")
-                    emit(Resource.Error<String>(it.message ?: "Failed to insert translated lyrics"))
-                }
-        }.flowOn(Dispatchers.IO)
 }
 
 private const val AM_ARTWORK_TAG = "AMArtwork"

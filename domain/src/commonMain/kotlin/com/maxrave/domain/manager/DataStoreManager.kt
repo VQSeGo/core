@@ -491,15 +491,6 @@ interface DataStoreManager {
 
     suspend fun setPreferredAudioLanguage(language: String)
 
-    val helpBuildLyricsDatabase: Flow<String>
-
-    suspend fun setHelpBuildLyricsDatabase(help: Boolean)
-
-    val contributorName: Flow<String>
-    val contributorEmail: Flow<String>
-
-    suspend fun setContributorLyricsDatabase(contributor: Pair<String, String>?)
-
     val backupDownloaded: Flow<String>
 
     suspend fun setBackupDownloaded(backupDownloaded: Boolean)

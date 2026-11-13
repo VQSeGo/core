@@ -18,16 +18,11 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.headers
 import io.ktor.client.request.parameter
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import org.simpmusic.lyrics.am.AMTokenManager
-import org.simpmusic.lyrics.models.request.LyricsBody
-import org.simpmusic.lyrics.models.request.TranslatedLyricsBody
-import org.simpmusic.lyrics.models.request.VoteBody
 
 class SimpMusicLyrics {
     private var httpClient = createClient()
@@ -82,20 +77,11 @@ class SimpMusicLyrics {
             }
         }
 
-    private fun HttpRequestBuilder.buildDefaultHeaders(
-        timestamp: String? = null,
-        hmac: String? = null,
-    ) {
+    private fun HttpRequestBuilder.buildDefaultHeaders() {
         headers {
             header(HttpHeaders.Accept, "application/json")
             header(HttpHeaders.UserAgent, "SimpMusicLyrics/1.0")
             header(HttpHeaders.ContentType, "application/json")
-            timestamp?.let {
-                header("X-Timestamp", it)
-            }
-            hmac?.let {
-                header("X-HMAC", it)
-            }
         }
     }
 
@@ -122,62 +108,6 @@ class SimpMusicLyrics {
         language: String,
     ) = httpClient.get(baseUrl + "translated/$videoId/$language") {
         buildDefaultHeaders()
-    }
-
-    suspend fun insertLyrics(
-        lyricsBody: LyricsBody,
-        hmacTimestamp: Pair<String, String>,
-    ) = httpClient.post {
-        buildDefaultHeaders(
-            timestamp = hmacTimestamp.second,
-            hmac = hmacTimestamp.first,
-        )
-        setBody(lyricsBody)
-    }
-
-    suspend fun insertTranslatedLyrics(
-        translatedLyricsBody: TranslatedLyricsBody,
-        hmacTimestamp: Pair<String, String>,
-    ) = httpClient.post(baseUrl + "translated") {
-        buildDefaultHeaders(
-            timestamp = hmacTimestamp.second,
-            hmac = hmacTimestamp.first,
-        )
-        setBody(translatedLyricsBody)
-    }
-
-    suspend fun voteLyrics(
-        id: String,
-        upvote: Boolean,
-        hmacTimestamp: Pair<String, String>,
-    ) = httpClient.post(baseUrl + "vote") {
-        buildDefaultHeaders(
-            timestamp = hmacTimestamp.second,
-            hmac = hmacTimestamp.first,
-        )
-        setBody(
-            VoteBody(
-                id = id,
-                vote = if (upvote) 1 else 0, // 1 for upvote, 0 for downvote
-            ),
-        )
-    }
-
-    suspend fun voteTranslatedLyrics(
-        id: String,
-        upvote: Boolean,
-        hmacTimestamp: Pair<String, String>,
-    ) = httpClient.post(baseUrl + "translated/vote") {
-        buildDefaultHeaders(
-            timestamp = hmacTimestamp.second,
-            hmac = hmacTimestamp.first,
-        )
-        setBody(
-            VoteBody(
-                id = id,
-                vote = if (upvote) 1 else 0, // 1 for upvote, 0 for downvote
-            ),
-        )
     }
 
     suspend fun searchLrclibLyrics(

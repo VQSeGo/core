@@ -1526,51 +1526,6 @@ internal class DataStoreManagerImpl(
         }
     }
 
-    override val helpBuildLyricsDatabase: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[HELP_BUILD_LYRICS_DATABASE] ?: FALSE
-        }
-
-    override suspend fun setHelpBuildLyricsDatabase(help: Boolean) {
-        withContext(Dispatchers.IO) {
-            if (help) {
-                settingsDataStore.edit { settings ->
-                    settings[HELP_BUILD_LYRICS_DATABASE] = TRUE
-                }
-            } else {
-                settingsDataStore.edit { settings ->
-                    settings[HELP_BUILD_LYRICS_DATABASE] = FALSE
-                }
-            }
-        }
-    }
-
-    override val contributorName: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[CONTRIBUTOR_NAME] ?: ""
-        }
-
-    override val contributorEmail: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[CONTRIBUTOR_EMAIL] ?: ""
-        }
-
-    override suspend fun setContributorLyricsDatabase(
-        contributor: Pair<String, String>?, // contributor name and email, null if anonymous
-    ) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                if (contributor == null) {
-                    settings[CONTRIBUTOR_NAME] = ""
-                    settings[CONTRIBUTOR_EMAIL] = ""
-                } else {
-                    settings[CONTRIBUTOR_NAME] = contributor.first
-                    settings[CONTRIBUTOR_EMAIL] = contributor.second
-                }
-            }
-        }
-    }
-
     override val backupDownloaded: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[BACKUP_DOWNLOADED] ?: FALSE
@@ -1900,9 +1855,6 @@ internal class DataStoreManagerImpl(
         val LOCAL_PLAYLIST_FILTER = stringPreferencesKey("local_playlist_filter")
         val YOUTUBE_SUBTITLE_LANGUAGE = stringPreferencesKey("youtube_subtitle_language")
         val PREFERRED_AUDIO_LANGUAGE = stringPreferencesKey("preferred_audio_language")
-        val HELP_BUILD_LYRICS_DATABASE = stringPreferencesKey("help_build_lyrics_database")
-        val CONTRIBUTOR_NAME = stringPreferencesKey("contributor_name")
-        val CONTRIBUTOR_EMAIL = stringPreferencesKey("contributor_email")
 
         val BACKUP_DOWNLOADED = stringPreferencesKey("backup_downloaded")
 

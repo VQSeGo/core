@@ -9,6 +9,4 @@ data class TranslatedLyricsResponse(
     val translatedLyric: String, // LRC format
     val language: String, // 2-letter code
     val vote: Int,
-    val contributor: String,
-    val contributorEmail: String,
 )
