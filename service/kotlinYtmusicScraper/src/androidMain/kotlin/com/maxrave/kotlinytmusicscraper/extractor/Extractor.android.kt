@@ -48,7 +48,7 @@ actual class Extractor {
         // throws, and the getter is package-private so its state cannot be read from here. Setting
         // it again turns "disabled forever" into "skipped for one track".
         YoutubeApiDecoder.setLocalDecoder(faradayDecoder)
-        pipePipeStreams(videoId, LOCAL_TIER)?.let { return it }
+        timedStage(videoId, "pipepipe-local") { pipePipeStreams(videoId, LOCAL_TIER) }?.let { return it }
 
         // Tier 2 — same extractor with no local decoder at all, so every challenge is solved at
         // api.pipepipe.dev. This is the tier a 403 from tier 1 must reach.
@@ -59,10 +59,23 @@ actual class Extractor {
         // PipePipe's own `disableLocalDecoder` does exactly this but is private, which is why it
         // cannot simply be called from here.
         YoutubeApiDecoder.setLocalDecoder(null)
-        pipePipeStreams(videoId, REMOTE_TIER)?.let { return it }
+        timedStage(videoId, "pipepipe-remote") { pipePipeStreams(videoId, REMOTE_TIER) }?.let { return it }
 
         // Tier 3 — a different extractor entirely.
-        return braveStreams(videoId)
+        return timedStage(videoId, "brave") { braveStreams(videoId) }
+    }
+
+    /** One `Offline` timing line per extraction tier, for the stream-resolution measurements. */
+    private inline fun <T> timedStage(
+        videoId: String,
+        stage: String,
+        block: () -> T,
+    ): T {
+        val started = System.nanoTime()
+        val result = block()
+        val ok = result != null && (result as? List<*>)?.isNotEmpty() != false
+        Logger.i("Offline", "resolve $videoId $stage ${(System.nanoTime() - started) / 1_000_000} ok=$ok")
+        return result
     }
 
     actual fun liveHlsUrl(videoId: String): String? {
@@ -121,7 +134,10 @@ actual class Extractor {
                 Logger.d(TAG, "PipePipe[$tier] missing required itags for $videoId (got=${pipeResult.map { it.first }})")
                 return null
             }
-            if (!pipeResult.headCheckRandomStream()) {
+            val headStarted = System.nanoTime()
+            val headOk = pipeResult.headCheckRandomStream()
+            Logger.i("Offline", "resolve $videoId head-$tier ${(System.nanoTime() - headStarted) / 1_000_000} ok=$headOk")
+            if (!headOk) {
                 Logger.d(TAG, "PipePipe[$tier] stream URL HEAD check failed (non 2xx) for $videoId")
                 // A rejected URL is the one symptom of a stale player table: the signature is
                 // well-formed and still wrong, so nothing threw on the way here. Only the on-device

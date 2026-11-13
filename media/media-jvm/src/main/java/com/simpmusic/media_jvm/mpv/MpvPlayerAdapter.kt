@@ -258,6 +258,10 @@ class MpvPlayerAdapter(
     private var retryCount = 0
     private var retryVideoId: String? = null
 
+    /** The track whose load started last and when, for the `resolve <id> sound` timing line. */
+    @Volatile
+    private var soundPending: Pair<String, Long>? = null
+
     // Where a stream last died early, so a track that always dies at one spot is eventually let go.
     private var earlyEndVideoId: String? = null
     private var earlyEndPositionMs = 0L
@@ -1511,6 +1515,7 @@ class MpvPlayerAdapter(
                     // Up front, not after the load: a load that fails is retried from here, and
                     // must not pick up where the previous track had got to.
                     cachedPosition = startPositionMs
+                    soundPending = videoId to System.nanoTime()
                     transitionToState(InternalState.PREPARING)
 
                     // Notify media item transition (fire-and-forget to avoid
@@ -1571,6 +1576,7 @@ class MpvPlayerAdapter(
                     player.applyPlaybackLevels()
 
                     if (cachedPrecache != null) {
+                        Logger.i("Offline", "resolve $videoId precached")
                         // The precached handle already has the file loaded and held paused;
                         // unpausing is all that is needed (VLC needed an explicit play() here too).
                         if (startPositionMs > 0) {
@@ -1732,6 +1738,12 @@ class MpvPlayerAdapter(
                 override fun playing(player: MpvPlayer) {
                     coroutineScope.launch {
                         if (currentPlayer !== player) return@launch
+                        soundPending?.let { (id, started) ->
+                            if (id == playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId) {
+                                Logger.i("Offline", "resolve $id sound ${(System.nanoTime() - started) / 1_000_000}")
+                            }
+                            soundPending = null
+                        }
                         if (internalState != InternalState.PLAYING) {
                             transitionToState(InternalState.PLAYING)
                             // Reset retry counter on successful playback
@@ -2743,6 +2755,13 @@ class MpvPlayerAdapter(
     override fun isLocallyPlayable(mediaId: String): Boolean = downloadedFile(mediaId) != null
 
     private suspend fun extractPlayableUrl(mediaItem: GenericMediaItem): PlayableSource? {
+        val started = System.nanoTime()
+        return resolvePlayableUrl(mediaItem).also {
+            Logger.i("Offline", "resolve ${mediaItem.mediaId} extract ${(System.nanoTime() - started) / 1_000_000} ok=${it != null}")
+        }
+    }
+
+    private suspend fun resolvePlayableUrl(mediaItem: GenericMediaItem): PlayableSource? {
         Logger.w(TAG, "Extracting playable URL for ${mediaItem.mediaId}")
         val shouldFindVideo =
             mediaItem.isVideo() &&
@@ -2786,7 +2805,9 @@ class MpvPlayerAdapter(
                     )
                 }
             } else if (!shouldFindVideo && !audioUrl.isNullOrEmpty()) {
+                val checkStarted = System.nanoTime()
                 val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
+                Logger.i("Offline", "resolve $videoId saved-is403 ${(System.nanoTime() - checkStarted) / 1_000_000} rejected=$is403Url")
                 if (!is403Url) {
                     Logger.w("Stream", "Audio from format")
                     Logger.i("Offline", "source $videoId saved-url")

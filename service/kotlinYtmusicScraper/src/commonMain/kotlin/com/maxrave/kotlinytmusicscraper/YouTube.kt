@@ -129,6 +129,7 @@ import kotlin.random.Random
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
+import kotlin.time.TimeSource
 
 private const val TAG = "YouTubeScraper"
 
@@ -1365,7 +1366,9 @@ class YouTube {
         } else {
             sigResponse = tempRes
         }
+        val extractStarted = TimeSource.Monotonic.markNow()
         val streamsList = ytMusic.getNewPipePlayer(videoId).orderByAudioTrack(preferredAudioLanguage)
+        Logger.i("Offline", "resolve $videoId extractor ${extractStarted.elapsedNow().inWholeMilliseconds}")
         if (streamsList.isEmpty()) return null
 
         decodedSigResponse =
@@ -1449,7 +1452,10 @@ class YouTube {
             Logger.d(TAG, "YouTube NewPipe URL $it")
         }
         val randomUrl = listUrlSig.randomOrNull() ?: return null
-        if (listUrlSig.isNotEmpty() && !is403Url(randomUrl)) {
+        val checkStarted = TimeSource.Monotonic.markNow()
+        val rejected = is403Url(randomUrl)
+        Logger.i("Offline", "resolve $videoId is403 ${checkStarted.elapsedNow().inWholeMilliseconds} rejected=$rejected")
+        if (listUrlSig.isNotEmpty() && !rejected) {
             Logger.d(TAG, "YouTube NewPipe Found URL $randomUrl")
             return decodedSigResponse
         } else {
@@ -1539,6 +1545,7 @@ class YouTube {
                     }.joinToString("")
 
             var decodedSigResponse: PlayerResponse? = null
+            val playerStarted = TimeSource.Monotonic.markNow()
             val tempRes =
                 ytMusic
                     .player(
@@ -1557,7 +1564,13 @@ class YouTube {
                                 epoch.daysUntil(today)
                             },
                     ).body<PlayerResponse>()
-                    .let {
+                    .also {
+                        Logger.i(
+                            "Offline",
+                            "resolve $videoId innertube ${playerStarted.elapsedNow().inWholeMilliseconds} " +
+                                "status=${it.playabilityStatus.status}",
+                        )
+                    }.let {
                         val fexp =
                             it.streamingData
                                 ?.serverAbrStreamingUrl
@@ -1624,6 +1637,7 @@ class YouTube {
             }
 
             val response = newPipePlayer(videoId, tempRes, preferredAudioLanguage)
+            Logger.i("Offline", "resolve $videoId player ${playerStarted.elapsedNow().inWholeMilliseconds} ok=${response != null}")
             if (response != null) {
                 decodedSigResponse = response
                 Logger.d(TAG, "YouTube Player found URL")
