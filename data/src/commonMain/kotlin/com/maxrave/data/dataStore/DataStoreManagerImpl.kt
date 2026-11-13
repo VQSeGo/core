@@ -1216,28 +1216,16 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    // 0 was the Auto length, which went with AutoMix: it now reads as the default fixed length.
     override val crossfadeDuration: Flow<Int> =
         settingsDataStore.data.map { preferences ->
-            preferences[CROSSFADE_DURATION] ?: 5000
+            preferences[CROSSFADE_DURATION]?.takeIf { it > 0 } ?: 5000
         }
 
     override suspend fun setCrossfadeDuration(duration: Int) {
         withContext(Dispatchers.IO) {
             settingsDataStore.edit { settings ->
                 settings[CROSSFADE_DURATION] = duration
-            }
-        }
-    }
-
-    override val crossfadeDjMode: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[CROSSFADE_DJ_MODE] ?: TRUE
-        }
-
-    override suspend fun setCrossfadeDjMode(enabled: Boolean) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[CROSSFADE_DJ_MODE] = if (enabled) TRUE else FALSE
             }
         }
     }
@@ -1553,7 +1541,6 @@ internal class DataStoreManagerImpl(
         val KILL_SERVICE_ON_EXIT = stringPreferencesKey("kill_service_on_exit")
         val CROSSFADE_ENABLED = stringPreferencesKey("crossfade_enabled")
         val CROSSFADE_DURATION = intPreferencesKey("crossfade_duration")
-        val CROSSFADE_DJ_MODE = stringPreferencesKey("crossfade_dj_mode")
         val CROSSFADE_SKIP_ALBUM = stringPreferencesKey("crossfade_skip_album")
         val AUTO_DOWNLOAD_LIKED_SONGS = stringPreferencesKey("auto_download_liked_songs")
         val SMART_DOWNLOADS_ENABLED = stringPreferencesKey("smart_downloads_enabled")
