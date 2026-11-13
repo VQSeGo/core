@@ -17,7 +17,6 @@ import com.maxrave.spotify.Spotify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import org.koin.dsl.module
-import org.simpmusic.aiservice.AiClient
 import org.simpmusic.lyrics.SimpMusicLyricsClient
 import kotlin.time.ExperimentalTime
 import org.simpmusic.autoeq.AutoEq
@@ -65,10 +64,6 @@ val databaseModule =
 
         single(createdAtStart = true) {
             Spotify()
-        }
-
-        single(createdAtStart = true) {
-            AiClient()
         }
 
         single(createdAtStart = true) {

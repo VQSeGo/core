@@ -54,14 +54,6 @@ interface DataStoreManager {
 
     suspend fun setMoodArtworkCache(json: String)
 
-    /**
-     * The AI's reading of the listener's taste behind the Library card, as serialized JSON. Null
-     * until the first reading, and set back to null when the listening history is cleared.
-     */
-    val tasteProfile: Flow<String?>
-
-    suspend fun setTasteProfile(json: String?)
-
     fun getString(key: String): Flow<String?>
 
     suspend fun putString(
@@ -393,30 +385,6 @@ interface DataStoreManager {
 
     suspend fun setVisitorData(visitorData: String)
 
-    suspend fun setAIProvider(provider: String)
-
-    val aiProvider: Flow<String>
-
-    suspend fun setAIApiKey(apiKey: String)
-
-    val aiApiKey: Flow<String>
-
-    val useAITranslation: Flow<String>
-
-    suspend fun setUseAITranslation(use: Boolean)
-
-    val customModelId: Flow<String>
-
-    suspend fun setCustomModelId(modelId: String)
-
-    val customOpenAIBaseUrl: Flow<String>
-
-    suspend fun setCustomOpenAIBaseUrl(baseUrl: String)
-
-    val customOpenAIHeaders: Flow<String>
-
-    suspend fun setCustomOpenAIHeaders(headers: String)
-
     val localPlaylistFilter: Flow<String>
 
     suspend fun setLocalPlaylistFilter(filter: String)
@@ -643,11 +611,6 @@ interface DataStoreManager {
 
         const val PROXY_TYPE_HTTP = "http"
         const val PROXY_TYPE_SOCKS = "socks"
-
-        // AI
-        const val AI_PROVIDER_GEMINI = "gemini"
-        const val AI_PROVIDER_OPENAI = "openai"
-        const val AI_PROVIDER_CUSTOM_OPENAI = "custom_openai"
 
         const val LOCAL_PLAYLIST_FILTER_OLDER_FIRST = "older_first"
         const val LOCAL_PLAYLIST_FILTER_NEWER_FIRST = "newer_first"

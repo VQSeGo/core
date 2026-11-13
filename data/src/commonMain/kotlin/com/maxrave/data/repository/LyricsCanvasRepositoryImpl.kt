@@ -12,7 +12,6 @@ import com.maxrave.domain.data.model.browse.artist.ArtistLogo
 import com.maxrave.domain.data.model.browse.artist.ArtistMotion
 import com.maxrave.domain.data.model.canvas.CanvasResult
 import com.maxrave.domain.data.model.metadata.Lyrics
-import com.maxrave.domain.data.model.metadata.SimpMusicLyrics
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.LyricsCanvasRepository
@@ -29,7 +28,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.simpmusic.aiservice.AiClient
 import org.simpmusic.lyrics.SimpMusicLyricsApiException
 import org.simpmusic.lyrics.SimpMusicLyricsClient
 import org.simpmusic.lyrics.am.AMAlbumResource
@@ -48,7 +46,6 @@ internal class LyricsCanvasRepositoryImpl(
     private val youTube: YouTube,
     private val spotify: Spotify,
     private val simpMusicLyrics: SimpMusicLyricsClient,
-    private val aiClient: AiClient,
 ) : LyricsCanvasRepository {
     /**
      * Video ids whose animated artwork is being searched right now, so the same track is never sent
@@ -652,25 +649,6 @@ internal class LyricsCanvasRepositoryImpl(
             .selectAMRendition(master, AM_MIN_RENDITION_WIDTH)
             .getOrNull() ?: master
 
-    override fun getAITranslationLyrics(
-        lyrics: Lyrics,
-        targetLanguage: String,
-    ): Flow<Resource<Lyrics>> =
-        flow {
-            runCatching {
-                Logger.w("AI Translation", "targetLanguage: $targetLanguage")
-                aiClient
-                    .translateLyrics(lyrics, targetLanguage)
-                    .onSuccess { translatedLyrics ->
-                        Logger.d("AI Translation", "translated ${translatedLyrics.lines?.size ?: 0} lines")
-                        emit(Resource.Success(translatedLyrics))
-                    }.onFailure { throwable ->
-                        Logger.e("AI Translation", "Error: ${throwable.message}")
-                        emit(Resource.Error<Lyrics>("Translation failed"))
-                    }
-            }
-        }.flowOn(Dispatchers.IO)
-
     // SimpMusic Lyrics
     private val simpMusicLyricsTag = "SimpMusicLyricsRepository"
 
@@ -699,14 +677,7 @@ internal class LyricsCanvasRepositoryImpl(
                         emit(Resource.Error<Lyrics>("No lyrics found"))
                         return@onSuccess
                     }
-                    val appLyrics =
-                        result.toLyrics()?.copy(
-                            simpMusicLyrics =
-                                SimpMusicLyrics(
-                                    id = result.id,
-                                    vote = result.vote,
-                                ),
-                        )
+                    val appLyrics = result.toLyrics()
                     if (appLyrics == null) {
                         Logger.w(simpMusicLyricsTag, "Failed to convert lyrics for videoId: $videoId")
                         emit(Resource.Error<Lyrics>("Failed to convert lyrics"))
@@ -734,15 +705,7 @@ internal class LyricsCanvasRepositoryImpl(
                     Logger.d(simpMusicLyricsTag, "Translated Lyrics found: ${lyrics.toLyrics()}")
                     emit(
                         Resource.Success<Lyrics>(
-                            lyrics
-                                .toLyrics()
-                                .copy(
-                                    simpMusicLyrics =
-                                        SimpMusicLyrics(
-                                            id = lyrics.id,
-                                            vote = lyrics.vote,
-                                        ),
-                                ),
+                            lyrics.toLyrics(),
                         ),
                     )
                 }.onFailure {

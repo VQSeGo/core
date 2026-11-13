@@ -81,11 +81,6 @@ interface LyricsCanvasRepository {
      */
     fun getArtistEditorial(artistName: String): Flow<Resource<ArtistEditorial>>
 
-    fun getAITranslationLyrics(
-        lyrics: Lyrics,
-        targetLanguage: String,
-    ): Flow<Resource<Lyrics>>
-
     fun getSimpMusicLyrics(videoId: String): Flow<Resource<Lyrics>>
 
     fun getSimpMusicTranslatedLyrics(

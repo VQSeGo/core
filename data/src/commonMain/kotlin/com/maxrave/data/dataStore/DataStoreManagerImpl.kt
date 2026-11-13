@@ -14,7 +14,6 @@ import com.maxrave.domain.data.model.discord.DiscordSession
 import com.maxrave.domain.data.model.network.ProxyConfiguration
 import com.maxrave.domain.data.player.ReverbPreset
 import com.maxrave.domain.manager.DataStoreManager
-import com.maxrave.domain.manager.DataStoreManager.Values.AI_PROVIDER_GEMINI
 import com.maxrave.domain.manager.DataStoreManager.Values.FALSE
 import com.maxrave.domain.manager.DataStoreManager.Values.GITHUB
 import com.maxrave.domain.manager.DataStoreManager.Values.LOCAL_PLAYLIST_FILTER_OLDER_FIRST
@@ -115,23 +114,6 @@ internal class DataStoreManagerImpl(
         withContext(Dispatchers.IO) {
             settingsDataStore.edit { settings ->
                 settings[MOOD_ARTWORK_CACHE] = json
-            }
-        }
-    }
-
-    override val tasteProfile: Flow<String?> =
-        settingsDataStore.data.map { preferences ->
-            preferences[TASTE_PROFILE]
-        }
-
-    override suspend fun setTasteProfile(json: String?) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                if (json == null) {
-                    settings.remove(TASTE_PROFILE)
-                } else {
-                    settings[TASTE_PROFILE] = json
-                }
             }
         }
     }
@@ -1264,90 +1246,6 @@ internal class DataStoreManagerImpl(
         }
     }
 
-    override suspend fun setAIProvider(provider: String) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[stringPreferencesKey("ai_provider")] = provider
-            }
-        }
-    }
-
-    override val aiProvider: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[AI_PROVIDER] ?: AI_PROVIDER_GEMINI
-        }
-
-    override suspend fun setAIApiKey(apiKey: String) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[AI_API_KEY] = apiKey
-            }
-        }
-    }
-
-    override val aiApiKey: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[AI_API_KEY] ?: ""
-        }
-
-    override val useAITranslation: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[USE_AI_TRANSLATION] ?: FALSE
-        }
-
-    override suspend fun setUseAITranslation(use: Boolean) {
-        withContext(Dispatchers.IO) {
-            if (use) {
-                settingsDataStore.edit { settings ->
-                    settings[USE_AI_TRANSLATION] = TRUE
-                }
-            } else {
-                settingsDataStore.edit { settings ->
-                    settings[USE_AI_TRANSLATION] = FALSE
-                }
-            }
-        }
-    }
-
-    override val customModelId =
-        settingsDataStore.data.map { preferences ->
-            preferences[CUSTOM_MODEL_ID] ?: ""
-        }
-
-    override suspend fun setCustomModelId(modelId: String) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[CUSTOM_MODEL_ID] = modelId
-            }
-        }
-    }
-
-    override val customOpenAIBaseUrl: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[CUSTOM_OPENAI_BASE_URL] ?: ""
-        }
-
-    override suspend fun setCustomOpenAIBaseUrl(baseUrl: String) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[CUSTOM_OPENAI_BASE_URL] = baseUrl
-            }
-        }
-    }
-
-    override val customOpenAIHeaders: Flow<String> =
-        settingsDataStore.data.map { preferences ->
-            preferences[CUSTOM_OPENAI_HEADERS] ?: ""
-        }
-
-    override suspend fun setCustomOpenAIHeaders(headers: String) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[CUSTOM_OPENAI_HEADERS] = headers
-            }
-        }
-    }
-
     override val localPlaylistFilter: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[LOCAL_PLAYLIST_FILTER] ?: LOCAL_PLAYLIST_FILTER_OLDER_FIRST
@@ -1762,7 +1660,6 @@ internal class DataStoreManagerImpl(
         val LOCATION = stringPreferencesKey("location")
         val MOOD_AND_GENRES_CACHE = stringPreferencesKey("mood_and_genres_cache")
         val MOOD_ARTWORK_CACHE = stringPreferencesKey("mood_artwork_cache")
-        val TASTE_PROFILE = stringPreferencesKey("ai_taste_profile")
         val QUALITY = stringPreferencesKey("quality")
         val DOWNLOAD_QUALITY = stringPreferencesKey("download_quality")
         val VIDEO_DOWNLOAD_QUALITY = stringPreferencesKey("video_download_quality")
@@ -1843,15 +1740,6 @@ internal class DataStoreManagerImpl(
         val OPEN_APP_TIME = intPreferencesKey("open_app_time")
         val DATA_SYNC_ID = stringPreferencesKey("data_sync_id")
         val VISITOR_DATA = stringPreferencesKey("visitor_data")
-        val AI_PROVIDER = stringPreferencesKey("ai_provider")
-        val AI_API_KEY = stringPreferencesKey("ai_gemini_api_key")
-
-        val CUSTOM_MODEL_ID = stringPreferencesKey("custom_model_id")
-        val CUSTOM_OPENAI_BASE_URL = stringPreferencesKey("custom_openai_base_url")
-        val CUSTOM_OPENAI_HEADERS = stringPreferencesKey("custom_openai_headers")
-
-        val USE_AI_TRANSLATION = stringPreferencesKey("use_ai_translation")
-
         val LOCAL_PLAYLIST_FILTER = stringPreferencesKey("local_playlist_filter")
         val YOUTUBE_SUBTITLE_LANGUAGE = stringPreferencesKey("youtube_subtitle_language")
         val PREFERRED_AUDIO_LANGUAGE = stringPreferencesKey("preferred_audio_language")
