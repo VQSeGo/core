@@ -37,9 +37,19 @@ internal fun Throwable.isLiveStreamDetected(): Boolean =
  * The default retry policy, except that a [LiveStreamDetectedException] is never retried. Retrying
  * cannot succeed — the resolver throws it again at once — and the default backs off for several
  * seconds before giving up, which the listener would sit through in silence before the stream starts.
+ *
+ * A failed load is reported after one retry instead of the default three. Every attempt runs the
+ * stream resolver again, which without a working network waits out its own 15 s limit: four
+ * attempts kept a track that could not play silent for about a minute before the queue moved on to
+ * the next one (two attempts: about 30 s). A load that made progress before failing resets the
+ * count, and the error only surfaces once the buffer runs dry, so a passing glitch mid-track is
+ * still ridden out. Live progressive streams keep their own, higher default.
  */
 @UnstableApi
 internal class LiveStreamAwareLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy() {
+    override fun getMinimumLoadableRetryCount(dataType: Int): Int =
+        if (dataType == C.DATA_TYPE_MEDIA_PROGRESSIVE_LIVE) super.getMinimumLoadableRetryCount(dataType) else 1
+
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long =
         if (loadErrorInfo.exception.isLiveStreamDetected()) C.TIME_UNSET else super.getRetryDelayMsFor(loadErrorInfo)
 }
