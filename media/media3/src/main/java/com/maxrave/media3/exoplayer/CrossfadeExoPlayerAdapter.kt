@@ -31,6 +31,7 @@ import com.maxrave.domain.data.player.PlayerConstants
 import com.maxrave.domain.data.player.PlayerError
 import com.maxrave.domain.extension.isVideo
 import com.maxrave.domain.manager.DataStoreManager
+import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.mediaservice.player.MediaPlayerListener
 import com.maxrave.domain.repository.StreamRepository
@@ -41,11 +42,15 @@ import com.maxrave.media3.audio.EchoAudioProcessor
 import com.maxrave.media3.audio.EqualizerAudioProcessor
 import com.maxrave.media3.audio.EqualizerCurve
 import com.maxrave.media3.audio.SleepFadeAudioProcessor
+import com.maxrave.media3.extension.dropStale
+import com.maxrave.media3.extension.isCorruptMedia
 import com.maxrave.media3.extension.isFullyCached
 import com.maxrave.media3.service.mediasourcefactory.isLiveStreamDetected
 import com.maxrave.media3.service.mediasourcefactory.MergingMediaSourceFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -89,6 +94,7 @@ internal class CrossfadeExoPlayerAdapter(
     private val waveformReader: WaveformReader,
     private val downloadCache: SimpleCache,
     private val playerCache: SimpleCache,
+    private val downloadHandler: DownloadHandler,
 ) : MediaPlayerInterface {
     // ========== Internal State Enum (same as GstreamerPlayerAdapter) ==========
 
@@ -379,6 +385,9 @@ internal class CrossfadeExoPlayerAdapter(
     // ========== Retry on Source Error ==========
     // Track retry attempts per media item to avoid infinite retry loops
     private var retryCount = 0
+
+    // Tracks whose broken copy on disk was already dropped this session (see healCorruptCopy).
+    private val healedVideoIds = mutableSetOf<String>()
     private var retryVideoId: String? = null
     private val maxRetryCount = 2
 
@@ -1594,6 +1603,49 @@ internal class CrossfadeExoPlayerAdapter(
         }
     }
 
+    /**
+     * A track read from disk that its container parser cannot read is a broken file there, not a
+     * network hiccup, and reloading it reads the same bytes again: a download spliced from two
+     * stream variants failed this way on every Play. So the copy is dropped (a download is fetched
+     * again, see DownloadHandler.redownloadCorrupt) and the track reloads where it failed, now
+     * from the network. Once per track per session, so a file that breaks again, or a parser
+     * error that has nothing to do with the file, ends in the usual retries and the skip.
+     *
+     * Handled here, before onPlayerError reaches the handler: the reload is not a failure for
+     * UnplayableTrackSkipper to count, and it must not move on to the next track first.
+     */
+    private fun healCorruptCopy(
+        videoId: String,
+        error: PlaybackException,
+    ): Boolean {
+        if (!error.isCorruptMedia() || videoId in healedVideoIds) return false
+        val keys = listOf(videoId, "${com.maxrave.common.MERGING_DATA_TYPE.VIDEO}$videoId")
+        val downloaded = keys.filter { downloadCache.isFullyCached(it, 0L) }
+        val cached = keys.filter { playerCache.isFullyCached(it, 0L) }
+        if (downloaded.isEmpty() && cached.isEmpty()) return false
+        healedVideoIds += videoId
+        Logger.i("Offline", "heal $videoId download=$downloaded cache=$cached (${error.errorCodeName})")
+        val index = localCurrentMediaItemIndex
+        val resumePositionMs = cachedPosition.coerceAtLeast(0L)
+        coroutineScope.launch {
+            try {
+                precachedPlayers.remove(videoId)?.player?.release()
+                withContext(Dispatchers.IO) {
+                    cached.forEach { playerCache.dropStale(it) }
+                    downloaded.forEach { key ->
+                        if (!downloadHandler.redownloadCorrupt(key)) downloadCache.dropStale(key)
+                    }
+                }
+                loadAndPlayTrackInternal(index, resumePositionMs, shouldPlay = true)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.e(TAG, "Heal failed: ${e.message}", e)
+                propagatePlayerError(error)
+            }
+        }
+        return true
+    }
+
     // ========== Internal: Load and Play Track ==========
 
     /**
@@ -1856,6 +1908,7 @@ internal class CrossfadeExoPlayerAdapter(
                                 "as a fully cached bare media id. Retrying to resolve a real URL.",
                         )
                     }
+                    if (currentVideoId != null && healCorruptCopy(currentVideoId, error)) return
                     if (isRetryableSourceError && currentVideoId != null) {
                         // Reset retry count if this is a different track
                         if (retryVideoId != currentVideoId) {

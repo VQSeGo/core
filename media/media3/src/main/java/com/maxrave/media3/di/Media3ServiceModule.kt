@@ -50,6 +50,7 @@ import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
+import com.maxrave.domain.mediaservice.StreamSpliceGuard
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
@@ -65,7 +66,14 @@ import com.maxrave.media3.cast.CastHandoffManager
 import com.maxrave.media3.waveform.WaveformReader
 import com.maxrave.media3.cast.CastStreamResolver
 import com.maxrave.media3.exoplayer.CrossfadeExoPlayerAdapter
+import com.maxrave.media3.extension.CacheBypassDataSourceFactory
+import com.maxrave.media3.extension.SkipCache
+import com.maxrave.media3.extension.dropStale
 import com.maxrave.media3.extension.isFullyCached
+import com.maxrave.media3.extension.isStaleFor
+import com.maxrave.media3.extension.logSpliceGuard
+import com.maxrave.media3.extension.recordStreamLength
+import com.maxrave.media3.extension.recordedStreamLength
 import com.maxrave.media3.repository.CacheRepositoryImpl
 import com.maxrave.media3.service.SimpleMediaService
 import com.maxrave.media3.service.callback.SimpleMediaSessionCallback
@@ -212,6 +220,7 @@ private val mediaServiceModule =
                 waveformReader = get(),
                 downloadCache = get(named(DOWNLOAD_CACHE)),
                 playerCache = get(named(PLAYER_CACHE)),
+                downloadHandler = get(),
             )
         }
 
@@ -254,7 +263,7 @@ private const val RESOLVE_TIMEOUT_MS = 15_000L
 
 @UnstableApi
 private fun provideResolvingDataSourceFactory(
-    cacheDataSourceFactory: CacheDataSource.Factory,
+    cacheDataSourceFactory: DataSource.Factory,
     downloadCache: SimpleCache,
     playerCache: SimpleCache,
     dataStoreManager: DataStoreManager,
@@ -304,6 +313,12 @@ private fun provideResolvingDataSourceFactory(
             }
             Logger.d("Stream", "Cached $mediaId")
             Logger.i("Offline", "source $mediaId cache pos=${dataSpec.position}")
+            // The download layer above playerCache serves whatever spans it has first: a partial
+            // download of another variant would be read in the middle of this one.
+            val skipDownload = downloadCache.isStaleFor(mediaId, playerCache.recordedStreamLength(mediaId))
+            if (skipDownload) {
+                downloadCache.logSpliceGuard(mediaId, playerCache.recordedStreamLength(mediaId) ?: 0L, "download (read around)")
+            }
             // Every byte is on disk right now, so CacheDataSource can serve this chunk
             // without ever reaching upstream, and the bare media id is safe as the URI.
             //
@@ -318,7 +333,31 @@ private fun provideResolvingDataSourceFactory(
             // "clear cache" tap mid-song and playback dies with no way back.
             // Capping to chunkLength forces a re-check at every chunk boundary, so a
             // cache that shrinks under us falls back to resolving a real URL.
-            return@Factory dataSpec.subrange(dataSpec.uriPositionOffset, chunkLength)
+            return@Factory dataSpec
+                .subrange(dataSpec.uriPositionOffset, chunkLength)
+                .let { if (skipDownload) it.buildUpon().setCustomData(SkipCache).build() else it }
+        }
+        // A URL of another variant than the bytes already cached under this id must not complete
+        // them (see StreamSpliceGuard). playerCache is written by this path alone, so its stale
+        // bytes are dropped; a partial download belongs to DownloadManager, possibly running, so
+        // it is only read around.
+        fun guardedChunk(url: String): DataSpec {
+            val chunk = dataSpec.withUri(url.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+            val fresh = StreamSpliceGuard.clenOf(url)
+            if (fresh == null) {
+                Logger.d("Offline", "no clen in the URL of $mediaId, splice guard skipped")
+                return chunk
+            }
+            if (playerCache.isStaleFor(mediaId, fresh)) {
+                playerCache.logSpliceGuard(mediaId, fresh, "cache")
+                playerCache.dropStale(mediaId)
+            }
+            playerCache.recordStreamLength(mediaId, fresh)
+            if (downloadCache.isStaleFor(mediaId, fresh)) {
+                downloadCache.logSpliceGuard(mediaId, fresh, "download (read around)")
+                return chunk.buildUpon().setCustomData(SkipCache).build()
+            }
+            return chunk
         }
         var dataSpecReturn: DataSpec = dataSpec
         var resolved = false
@@ -337,7 +376,7 @@ private fun provideResolvingDataSourceFactory(
                             Logger.d("Stream", "is 403 $is403Url")
                             if (!is403Url) {
                                 Logger.i("Offline", "source $mediaId saved-url pos=${dataSpec.position}")
-                                dataSpecReturn = dataSpec.withUri(videoUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                                dataSpecReturn = guardedChunk(videoUrl)
                                 resolved = true
                                 return@withTimeoutOrNull
                             }
@@ -354,7 +393,7 @@ private fun provideResolvingDataSourceFactory(
                             Logger.d("Stream", it)
                             Logger.d("Stream", "Video")
                             Logger.i("Offline", "source $mediaId fresh-url pos=${dataSpec.position}")
-                            dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                            dataSpecReturn = guardedChunk(it)
                             resolved = true
                         }
                 } else {
@@ -367,7 +406,7 @@ private fun provideResolvingDataSourceFactory(
                             Logger.d("Stream", "is 403 $is403Url")
                             if (!is403Url) {
                                 Logger.i("Offline", "source $mediaId saved-url pos=${dataSpec.position}")
-                                dataSpecReturn = dataSpec.withUri(audioUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                                dataSpecReturn = guardedChunk(audioUrl)
                                 resolved = true
                                 return@withTimeoutOrNull
                             }
@@ -384,7 +423,7 @@ private fun provideResolvingDataSourceFactory(
                             Logger.d("Stream", it)
                             Logger.d("Stream", "Audio")
                             Logger.i("Offline", "source $mediaId fresh-url pos=${dataSpec.position}")
-                            dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                            dataSpecReturn = guardedChunk(it)
                             resolved = true
                         }
                 }
@@ -541,17 +580,24 @@ private fun provideCacheDataSource(
     playerCache: SimpleCache,
     context: Context,
     proxy: Proxy? = null,
-): CacheDataSource.Factory =
-    CacheDataSource
-        .Factory()
-        .setCache(downloadCache)
-        .setUpstreamDataSourceFactory(
+): DataSource.Factory {
+    val playerCacheSource =
+        CacheDataSource
+            .Factory()
+            .setCache(playerCache)
+            .setUpstreamDataSourceFactory(provideHttpDataSourceFactory(context, proxy))
+    return CacheBypassDataSourceFactory(
+        cached =
             CacheDataSource
                 .Factory()
-                .setCache(playerCache)
-                .setUpstreamDataSourceFactory(provideHttpDataSourceFactory(context, proxy)),
-        ).setCacheWriteDataSinkFactory(null)
-        .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+                .setCache(downloadCache)
+                .setUpstreamDataSourceFactory(playerCacheSource)
+                .setCacheWriteDataSinkFactory(null)
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR),
+        // A partial download of another stream variant (SkipCache from the resolver).
+        direct = playerCacheSource,
+    )
+}
 
 /** The network underneath every player source: OkHttp behind the user's proxy, with header logging. */
 @UnstableApi

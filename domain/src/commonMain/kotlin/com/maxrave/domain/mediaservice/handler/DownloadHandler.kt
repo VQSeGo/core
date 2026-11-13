@@ -35,6 +35,13 @@ interface DownloadHandler {
 
     fun removeAllDownloads()
 
+    /**
+     * A finished download under cache key [key] (a video id, or the video half's key) turned out
+     * unreadable: drops its bytes at once, so the next read goes to the network, and downloads it
+     * again. False when there is no finished download under [key]. Android only.
+     */
+    fun redownloadCorrupt(key: String): Boolean = false
+
     val downloads: StateFlow<Map<String, Pair<Download?, Download?>>>
 
     val downloadTask: StateFlow<Map<String, Int>>

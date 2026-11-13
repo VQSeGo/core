@@ -30,7 +30,14 @@ import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.domain.utils.isLive
 import com.maxrave.logger.Logger
+import com.maxrave.domain.mediaservice.StreamSpliceGuard
+import com.maxrave.media3.extension.CacheBypassDataSourceFactory
+import com.maxrave.media3.extension.SkipCache
+import com.maxrave.media3.extension.dropStale
 import com.maxrave.media3.extension.isFullyCached
+import com.maxrave.media3.extension.isStaleFor
+import com.maxrave.media3.extension.logSpliceGuard
+import com.maxrave.media3.extension.recordStreamLength
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Runnable
@@ -59,18 +66,22 @@ internal class DownloadUtils(
 ) : DownloadHandler {
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    private val httpDataSourceFactory = OkHttpDataSource.Factory(OkHttpClient.Builder().build())
+
+    // What the player has already streamed is reused, but read only: a download's own variant
+    // (download quality is a setting of its own) must not land in playerCache under the same id,
+    // and playerCache bytes of another variant are read around (SkipCache, see [guarded]).
     private val dataSourceFactory =
         ResolvingDataSource.Factory(
-            CacheDataSource
-                .Factory()
-                .setCache(playerCache)
-                .setUpstreamDataSourceFactory(
-                    OkHttpDataSource.Factory(
-                        OkHttpClient
-                            .Builder()
-                            .build(),
-                    ),
-                ),
+            CacheBypassDataSourceFactory(
+                cached =
+                    CacheDataSource
+                        .Factory()
+                        .setCache(playerCache)
+                        .setCacheWriteDataSinkFactory(null)
+                        .setUpstreamDataSourceFactory(httpDataSourceFactory),
+                direct = httpDataSourceFactory,
+            ),
         ) { dataSpec ->
             val mediaId = dataSpec.key ?: error("No media id")
             Logger.d("Stream", mediaId)
@@ -107,7 +118,7 @@ internal class DownloadUtils(
                             Logger.d("Stream", "Video from format")
                             val is403Url = streamRepository.is403Url(videoUrl).firstOrNull() != false
                             if (!is403Url) {
-                                dataSpecReturn = dataSpec.withUri(videoUrl.toUri())
+                                dataSpecReturn = guarded(dataSpec, mediaId, videoUrl)
                                 resolved = true
                                 return@runBlocking
                             }
@@ -121,7 +132,7 @@ internal class DownloadUtils(
                             true,
                         ).lastOrNull()
                         ?.let {
-                            dataSpecReturn = dataSpec.withUri(it.toUri())
+                            dataSpecReturn = guarded(dataSpec, mediaId, it)
                             resolved = true
                         }
                 } else {
@@ -132,7 +143,7 @@ internal class DownloadUtils(
                             Logger.d("Stream", "Audio from format")
                             val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
                             if (!is403Url) {
-                                dataSpecReturn = dataSpec.withUri(audioUrl.toUri())
+                                dataSpecReturn = guarded(dataSpec, mediaId, audioUrl)
                                 resolved = true
                                 return@runBlocking
                             }
@@ -152,7 +163,7 @@ internal class DownloadUtils(
                                     ByteArrayInputStream(it.toByteArray()),
                                 )
                             }
-                            dataSpecReturn = dataSpec.withUri(it.toUri())
+                            dataSpecReturn = guarded(dataSpec, mediaId, it)
                             resolved = true
                         }
                 }
@@ -171,6 +182,37 @@ internal class DownloadUtils(
             }
             return@Factory dataSpecReturn
         }
+    /**
+     * The URL [url] for [dataSpec], checked against what is already on disk for [key] (see
+     * StreamSpliceGuard). The DownloadManager reading this has sized its work from downloadCache
+     * before this runs, so stale bytes there cannot just be dropped and read on: they are dropped
+     * and this attempt fails, and DownloadManager's retry starts the file over from byte zero.
+     * Stale playerCache bytes belong to playback and are only read around.
+     */
+    private fun guarded(
+        dataSpec: DataSpec,
+        key: String,
+        url: String,
+    ): DataSpec {
+        val spec = dataSpec.withUri(url.toUri())
+        val fresh = StreamSpliceGuard.clenOf(url)
+        if (fresh == null) {
+            Logger.d("Offline", "no clen in the download URL of $key, splice guard skipped")
+            return spec
+        }
+        if (downloadCache.isStaleFor(key, fresh)) {
+            downloadCache.logSpliceGuard(key, fresh, "download (restart)")
+            downloadCache.dropStale(key)
+            throw java.io.IOException("Download of $key restarts: the bytes on disk came from another stream variant")
+        }
+        downloadCache.recordStreamLength(key, fresh)
+        if (playerCache.isStaleFor(key, fresh)) {
+            playerCache.logSpliceGuard(key, fresh, "cache (read around)")
+            return spec.buildUpon().setCustomData(SkipCache).build()
+        }
+        return spec
+    }
+
     val downloadNotificationHelper =
         DownloadNotificationHelper(
             context,
@@ -298,6 +340,34 @@ internal class DownloadUtils(
             id,
             false,
         )
+    }
+
+    /**
+     * The bytes go synchronously, before the caller reloads the track: DownloadManager removes them
+     * too, but on its own thread, and a player reloading first would read the broken file again.
+     * Then the download is removed and added again, in that order: an add that finds the download
+     * REMOVING turns it into RESTARTING, which fetches it anew once the removal is done, and the
+     * song row follows through the usual states. An add on its own would find the download
+     * COMPLETED and finish at once with nothing fetched.
+     */
+    override fun redownloadCorrupt(key: String): Boolean {
+        val download = downloadManager.downloadIndex.getDownload(key)
+        if (download == null || download.state != Download.STATE_COMPLETED) return false
+        downloadCache.dropStale(key)
+        try {
+            DownloadService.sendRemoveDownload(context, MusicDownloadService::class.java, key, false)
+            DownloadService.sendAddDownload(context, MusicDownloadService::class.java, download.request, false)
+        } catch (e: IllegalStateException) {
+            // startService from the background. The manager runs the same requests itself; the
+            // service only keeps the process alive, and picks the queue up when it next starts.
+            Logger.w("Offline", "redownload $key without the service: ${e.message}")
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                downloadManager.removeDownload(key)
+                downloadManager.addDownload(download.request)
+            }
+        }
+        Logger.i("Offline", "redownload $key queued")
+        return true
     }
 
     override fun removeAllDownloads() {
