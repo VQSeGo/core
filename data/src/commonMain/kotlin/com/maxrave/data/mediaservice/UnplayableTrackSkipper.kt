@@ -11,8 +11,8 @@ import com.maxrave.logger.Logger
  *
  * - Nothing was asked to play (a queue restored at startup): stay on the track, quietly. Pressing
  *   Play later tries it again, and a second failure then skips.
- * - Otherwise skip to the nearest following track that plays from disk
- *   ([MediaPlayerInterface.isLocallyPlayable]); if there is none, to the next one.
+ * - Otherwise skip to the next track; from the second failure in a row on, to the nearest following
+ *   track that plays from disk ([MediaPlayerInterface.isLocallyPlayable]), or the next one if none.
  * - Stop (pause) at the end of the queue, under Repeat One, and after [maxConsecutiveFailures]
  *   failures in a row, so a queue where nothing plays is not cycled through forever. A track that
  *   starts playing ([onPlaying]) clears the count.
@@ -81,6 +81,10 @@ internal class UnplayableTrackSkipper(
             order.subList(position + 1, order.size) +
                 if (player.repeatMode == PlayerConstants.REPEAT_MODE_ALL) order.subList(0, position) else emptyList()
         if (following.isEmpty()) return null
+        // A single failure may be one track blocked in the region while the network is fine: take the
+        // neighbour, so streamed tracks in between are not skipped. A second failure in a row looks like
+        // no network: jump to the nearest track on disk.
+        if (failures < 2) return following.first()
         return following.firstOrNull { index ->
             player.getMediaItemAt(index)?.mediaId?.let(player::isLocallyPlayable) == true
         } ?: following.first()
