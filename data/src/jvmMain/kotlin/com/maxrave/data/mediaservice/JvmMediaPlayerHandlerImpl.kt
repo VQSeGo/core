@@ -13,9 +13,6 @@ import com.maxrave.common.DESC
 import com.maxrave.common.LOCAL_PLAYLIST_ID
 import com.maxrave.common.LOCAL_PLAYLIST_ID_SAVED_QUEUE
 import com.maxrave.common.MERGING_DATA_TYPE
-import com.maxrave.common.SPONSOR_BLOCK_MIN_SEGMENT_SECONDS
-import com.maxrave.common.SPONSOR_BLOCK_SKIP_MARGIN_MS
-import com.maxrave.common.SponsorBlockType
 import com.maxrave.common.TITLE
 import com.maxrave.data.db.Converters
 import com.maxrave.data.lastfm.LastfmScrobbler
@@ -25,7 +22,6 @@ import com.maxrave.data.mediaservice.mac.NowPlayingInfo
 import com.maxrave.domain.data.entities.NewFormatEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.browse.album.Track
-import com.maxrave.domain.data.model.mediaService.SponsorSkipSegments
 import com.maxrave.domain.data.model.searchResult.songs.Artist
 import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint
 import com.maxrave.domain.data.player.AppOnScreen
@@ -130,8 +126,8 @@ private const val SMOOTH_SNAP_MS = 1_000L
 
 // Position tick while no window is on screen (AppOnScreen). Nothing draws the position then, and a
 // minimized window still renders on Windows and Linux, so 50 ms ticks were 20 frames a second of
-// it. A second still serves what reads the ticks off screen: SponsorBlock (a skip can now land up to
-// a second late), the watch-time pings, the 5 s position save and the scrobbler.
+// it. A second still serves what reads the ticks off screen: the watch-time pings, the 5 s position
+// save and the scrobbler.
 private const val OFF_SCREEN_TICK_MS = 1_000L
 
 class JvmMediaPlayerHandlerImpl(
@@ -304,16 +300,6 @@ class JvmMediaPlayerHandlerImpl(
     private val _sleepTimerState = MutableStateFlow<SleepTimerState>(SleepTimerState(false, 0))
     override val sleepTimerState: StateFlow<SleepTimerState> = _sleepTimerState.asStateFlow()
 
-    // SponsorBlock skip segments
-    private val _skipSegments: MutableStateFlow<List<SponsorSkipSegments>?> = MutableStateFlow<List<SponsorSkipSegments>?>(null)
-    override val skipSegments: StateFlow<List<SponsorSkipSegments>?> = _skipSegments.asStateFlow()
-
-    // SponsorBlock's ticked categories, kept current by a collector in init; null while SponsorBlock is
-    // off or not loaded yet. The per-tick skip check reads this instead of asking DataStore on every 50 ms tick: those
-    // reads (one for the switch plus one per category) kept landing in the middle of the 5 s position
-    // save on Windows (see ReadsWaitForWritesStorage).
-    private val sponsorBlockCategories = MutableStateFlow<Set<String>?>(null)
-
     private val _format: MutableStateFlow<NewFormatEntity?> = MutableStateFlow<NewFormatEntity?>(null)
     override val format: StateFlow<NewFormatEntity?> = _format.asStateFlow()
 
@@ -350,8 +336,6 @@ class JvmMediaPlayerHandlerImpl(
      * platforms on one timeline.
      */
     private val sleepFadeTailMs = 800L
-
-    private var getSkipSegmentsJob: Job? = null
 
     private var getFormatJob: Job? = null
 
@@ -424,7 +408,6 @@ class JvmMediaPlayerHandlerImpl(
         toggleLikeJob = Job()
         loadJob = Job()
         songEntityJob = Job()
-        getSkipSegmentsJob = Job()
         getFormatJob = Job()
         jobWatchtime = Job()
         skipSilent = runBlocking { dataStoreManager.skipSilent.first() == TRUE }
@@ -553,55 +536,6 @@ class JvmMediaPlayerHandlerImpl(
                         updateNotification()
                     }
                 }
-            val sponsorBlockCategoriesJob =
-                launch {
-                    combine(
-                        SponsorBlockType.toList().map { type ->
-                            dataStoreManager.getString(type.value).map { if (it == TRUE) type.value else null }
-                        },
-                    ) { ticked -> ticked.filterNotNull().toSet() }
-                        .combine(dataStoreManager.sponsorBlockEnabled) { ticked, enabled -> ticked.takeIf { enabled == TRUE } }
-                        .collect { sponsorBlockCategories.value = it }
-                }
-            val skipSegmentsJob =
-                launch {
-                    simpleMediaState
-                        .filter { it is SimpleMediaState.Progress }
-                        .map {
-                            val current = (it as SimpleMediaState.Progress).progress
-                            val duration = player.duration
-                            if (duration > 0L) {
-                                (current.toFloat() / player.duration) * 100
-                            } else {
-                                -1f
-                            }
-                        }.filter { it >= 0f }
-                        .distinctUntilChanged()
-                        .collect { current ->
-                            val categories = sponsorBlockCategories.value
-                            val skipSegments = skipSegments.value
-                            if (categories != null && player.duration > 0L && skipSegments != null) {
-                                for (skip in skipSegments) {
-                                    if (categories.contains(skip.category)) {
-                                        if (skip.segment[1] - skip.segment[0] < SPONSOR_BLOCK_MIN_SEGMENT_SECONDS) {
-                                            continue
-                                        }
-                                        val firstPart = ((skip.segment[0] / skip.videoDuration) * 100).toFloat()
-                                        val secondPart =
-                                            ((skip.segment[1] / skip.videoDuration) * 100).toFloat()
-                                        if (current in firstPart..secondPart) {
-                                            Logger.w(TAG, "Seek to $secondPart")
-                                            Logger.d(TAG, "Seek to Cr: $current, First: $firstPart, Second: $secondPart")
-                                            skipSegment(
-                                                (secondPart * player.duration).toLong() / 100 + SPONSOR_BLOCK_SKIP_MARGIN_MS,
-                                            )
-                                            showToast(ToastType.SponsorBlockSkip(skip.category))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                }
             val playbackJob =
                 launch {
                     format.collectLatest { formatTemp ->
@@ -714,8 +648,6 @@ class JvmMediaPlayerHandlerImpl(
                         }
                 }
             controlStateJob.join()
-            sponsorBlockCategoriesJob.join()
-            skipSegmentsJob.join()
             playbackJob.join()
             playbackSpeedPitchJob.join()
             discordRPCEnabledJob.join()
@@ -739,7 +671,6 @@ class JvmMediaPlayerHandlerImpl(
             )
         }
         _format.value = null
-        _skipSegments.value = null
         // Cancelled here, not further down: the writes below touch the song table, which makes the
         // previous track's subscription emit its own row over the track that just started.
         songEntityJob?.cancel()
@@ -853,31 +784,10 @@ class JvmMediaPlayerHandlerImpl(
                     )
                     updateMacOSNowPlayingInfo(song)
                 }
-                if (dataStoreManager.sponsorBlockEnabled.first() == TRUE) {
-                    getSkipSegments(videoId)
-                }
                 if (dataStoreManager.sendBackToGoogle.first() == TRUE) {
                     getFormat(videoId)
                 }
             }
-    }
-
-    private fun getSkipSegments(videoId: String) {
-        _skipSegments.value = null
-        coroutineScope.launch {
-            streamRepository.getSkipSegments(videoId).collect { response ->
-                when (response) {
-                    is Resource.Success -> {
-                        _skipSegments.value = response.data
-                    }
-
-                    is Resource.Error -> {
-                        Logger.e(TAG, "getSkipSegments: ${response.message}")
-                        _skipSegments.value = null
-                    }
-                }
-            }
-        }
     }
 
     private fun getFormat(mediaId: String?) {
@@ -1020,20 +930,6 @@ class JvmMediaPlayerHandlerImpl(
     ) {
         player.moveMediaItem(fromIndex, newIndex)
         _currentSongIndex.value = player.currentMediaItemIndex
-    }
-
-    private fun skipSegment(position: Long) {
-        resetPositionSmoothing()
-        if (position in 0..player.duration) {
-            player.seekTo(position)
-        } else if (position > player.duration) {
-            player.seekToNext()
-        }
-        // SponsorBlock skip moves the position without going through onPlayerEvent; refresh presence
-        // so Discord's client-side rendered progress bar reflects the new timestamps.
-        if (controlState.value.isPlaying) {
-            nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
-        }
     }
 
     private fun updateNotification() {
@@ -2740,8 +2636,6 @@ class JvmMediaPlayerHandlerImpl(
             loadJob = null
             songEntityJob?.cancel()
             songEntityJob = null
-            getSkipSegmentsJob?.cancel()
-            getSkipSegmentsJob = null
             getFormatJob?.cancel()
             getFormatJob = null
             jobWatchtime?.cancel()

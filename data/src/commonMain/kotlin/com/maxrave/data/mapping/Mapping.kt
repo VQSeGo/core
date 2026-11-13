@@ -8,7 +8,6 @@ import com.maxrave.domain.data.model.comments.YouTubeCommentsHeader
 import com.maxrave.domain.data.model.comments.YouTubeCommentsPage
 import com.maxrave.domain.data.model.canvas.CanvasResult
 import com.maxrave.domain.data.model.home.Content
-import com.maxrave.domain.data.model.mediaService.SponsorSkipSegments
 import com.maxrave.domain.data.model.metadata.Line
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
@@ -31,7 +30,6 @@ import com.maxrave.kotlinytmusicscraper.models.VideoItem
 import com.maxrave.kotlinytmusicscraper.models.WatchEndpoint
 import com.maxrave.kotlinytmusicscraper.models.YTItem
 import com.maxrave.kotlinytmusicscraper.models.response.PipedResponse
-import com.maxrave.kotlinytmusicscraper.models.sponsorblock.SkipSegments
 import com.maxrave.kotlinytmusicscraper.models.youtube.Transcript
 import com.maxrave.kotlinytmusicscraper.models.youtube.YouTubeInitialPage
 import com.maxrave.kotlinytmusicscraper.pages.CommentItem
@@ -492,18 +490,6 @@ internal fun WatchEndpoint.toYouTubeWatchEndpoint(): YouTubeWatchEndpoint =
                         ),
                 )
             },
-    )
-
-internal fun SkipSegments.toSponsorSkipSegments(): SponsorSkipSegments =
-    SponsorSkipSegments(
-        actionType = this.actionType,
-        category = this.category,
-        description = this.description,
-        locked = this.locked,
-        segment = this.segment,
-        uUID = this.uUID,
-        videoDuration = this.videoDuration,
-        votes = this.votes,
     )
 
 internal fun AccountInfo.toDomainAccountInfo(): com.maxrave.domain.data.model.account.AccountInfo =

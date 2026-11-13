@@ -705,27 +705,6 @@ class Ytmusic {
         )
     }
 
-    /***
-     * SponsorBlock testing
-     * @author maxrave-dev
-     */
-
-    suspend fun getSkipSegments(videoId: String) =
-        httpClient.get("https://sponsor.ajay.app/api/skipSegments/") {
-            contentType(ContentType.Application.Json)
-            parameter("videoID", videoId)
-            parameter("category", "sponsor")
-            parameter("category", "selfpromo")
-            parameter("category", "interaction")
-            parameter("category", "intro")
-            parameter("category", "outro")
-            parameter("category", "preview")
-            parameter("category", "music_offtopic")
-            parameter("category", "poi_highlight")
-            parameter("category", "filler")
-            parameter("service", "YouTube")
-        }
-
     suspend fun checkForGithubReleaseUpdate() =
         httpClient.get("https://api.github.com/repos/maxrave-dev/SimpMusic/releases/latest") {
             contentType(ContentType.Application.Json)
