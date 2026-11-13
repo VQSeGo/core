@@ -83,10 +83,13 @@ actual class Extractor {
         timedStage(videoId, "pipepipe-remote") { pipePipeStreams(videoId, REMOTE_TIER) }?.let { return it }
 
         // Tier 3 — a different extractor entirely.
-        return timedStage(videoId, "brave") { braveStreams(videoId) }.also {
-            // Only when BravePipe was not just refused up front: its URL is not HEAD-checked here.
-            if (it.isNotEmpty() && !braveFirst) braveFirstUntil = System.currentTimeMillis() + BRAVE_FIRST_MS
-        }
+        // HEAD-checked like every other tier: YouTube.newPipePlayer no longer checks the result again.
+        val last = timedStage(videoId, "brave") { braveStreams(videoId) }
+        if (last.isEmpty()) return last
+        if (!last.headCheckRandomStream()) return emptyList()
+        // Only when BravePipe was not just refused up front.
+        if (!braveFirst) braveFirstUntil = System.currentTimeMillis() + BRAVE_FIRST_MS
+        return last
     }
 
     /** One `Offline` timing line per extraction tier, for the stream-resolution measurements. */

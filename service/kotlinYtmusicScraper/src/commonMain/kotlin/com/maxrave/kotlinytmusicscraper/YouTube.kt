@@ -1451,17 +1451,13 @@ class YouTube {
         listUrlSig.forEach {
             Logger.d(TAG, "YouTube NewPipe URL $it")
         }
-        val randomUrl = listUrlSig.randomOrNull() ?: return null
-        val checkStarted = TimeSource.Monotonic.markNow()
-        val rejected = is403Url(randomUrl)
-        Logger.i("Offline", "resolve $videoId is403 ${checkStarted.elapsedNow().inWholeMilliseconds} rejected=$rejected")
-        if (listUrlSig.isNotEmpty() && !rejected) {
-            Logger.d(TAG, "YouTube NewPipe Found URL $randomUrl")
-            return decodedSigResponse
-        } else {
+        // No second HEAD request here: every extractor tier has already HEAD-checked one of these
+        // URLs (Extractor.newPipePlayer), and a URL refused later is reloaded by the player.
+        if (listUrlSig.isEmpty()) {
             Logger.d(TAG, "YouTube NewPipe No URL Found")
             return null
         }
+        return decodedSigResponse
     }
 
     fun isManifestUrl(url: String): Boolean = url.contains(".m3u8") || url.contains(".mpd") || url.contains("manifest")
