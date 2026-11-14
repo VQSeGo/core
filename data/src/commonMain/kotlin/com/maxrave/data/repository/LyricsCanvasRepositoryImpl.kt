@@ -231,7 +231,7 @@ internal class LyricsCanvasRepositoryImpl(
         duration: Int?,
     ): Flow<Resource<Lyrics>> =
         flow {
-            Logger.w("Lyrics", "getLrclibLyricsData: $sartist $strack $duration")
+            Logger.d("Lyrics", "getLrclibLyricsData: $sartist $strack $duration")
             val qartist =
                 sartist
                     .replace(
@@ -272,7 +272,7 @@ internal class LyricsCanvasRepositoryImpl(
         duration: Int?,
     ): Flow<Resource<Lyrics>> =
         flow {
-            Logger.w("Lyrics", "getBetterLyrics: $artist $track")
+            Logger.d("Lyrics", "getBetterLyrics: $artist $track")
             val qartist =
                 artist
                     .replace(
@@ -334,7 +334,7 @@ internal class LyricsCanvasRepositoryImpl(
                     Logger.d(simpMusicLyricsTag) { "Lyrics found: ${Logger.clip(lyrics)}" }
                     val result = lyrics.firstOrNull()
                     if (result == null) {
-                        Logger.w(simpMusicLyricsTag, "No lyrics found for videoId: $videoId")
+                        Logger.d(simpMusicLyricsTag, "No lyrics found for videoId: $videoId")
                         emit(Resource.Error<Lyrics>("No lyrics found"))
                         return@onSuccess
                     }

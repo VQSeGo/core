@@ -510,7 +510,7 @@ class JvmMediaPlayerHandlerImpl(
                             if (formatTemp != null) {
                                 println("format in viewModel: $formatTemp")
                                 Logger.d(TAG, "Collect format ${formatTemp.videoId}")
-                                Logger.w(TAG, "Format expire at ${formatTemp.expiredTime}")
+                                Logger.d(TAG, "Format expire at ${formatTemp.expiredTime}")
                                 Logger.i(TAG, "AtrUrl ${formatTemp.playbackTrackingAtrUrl}")
                                 initPlayback(
                                     formatTemp.playbackTrackingVideostatsPlaybackUrl,
@@ -527,13 +527,13 @@ class JvmMediaPlayerHandlerImpl(
                     combine(dataStoreManager.playbackSpeed, dataStoreManager.pitch) { speed, pitch ->
                         Pair(speed, pitch)
                     }.distinctUntilChanged().collectLatest { pair ->
-                        Logger.w(TAG, "Playback speed: ${pair.first}, Pitch: ${pair.second}")
+                        Logger.d(TAG, "Playback speed: ${pair.first}, Pitch: ${pair.second}")
                         player.playbackParameters =
                             GenericPlaybackParameters(
                                 pair.first,
                                 2f.pow(pair.second.toFloat() / 12),
                             )
-                        Logger.w(TAG, "Playback current speed: ${player.playbackParameters.speed}, Pitch: ${player.playbackParameters.pitch}")
+                        Logger.d(TAG, "Playback current speed: ${player.playbackParameters.speed}, Pitch: ${player.playbackParameters.pitch}")
                         // A speed change shifts the RPC start/end timestamps (Discord renders the bar
                         // from timestamps client-side), so refresh presence while actively playing.
                         if (player.isPlaying) {
@@ -646,7 +646,7 @@ class JvmMediaPlayerHandlerImpl(
         getDataOfNowPlayingTrackStateJob?.cancel()
         getDataOfNowPlayingTrackStateJob =
             coroutineScope.launch {
-                Logger.w(TAG, "getDataOfNowPlayingState: $videoId")
+                Logger.d(TAG, "getDataOfNowPlayingState: $videoId")
                 songRepository.getSongById(videoId).cancellable().singleOrNull().let { songEntity ->
                     // Both branches resolve to an entity that already carries the up-scaled
                     // thumbnail, so the now-playing state, Discord RPC and the OS media panels
@@ -846,7 +846,7 @@ class JvmMediaPlayerHandlerImpl(
                                                 }
                                         }
                                     }
-                                    Logger.w("Check updateWatchTime", watchTimeList.toString())
+                                    Logger.d("Check updateWatchTime", watchTimeList.toString())
                                 }
                             }
                         }
@@ -916,7 +916,7 @@ class JvmMediaPlayerHandlerImpl(
                         .getSongById(id)
                         .singleOrNull()
                         ?.liked ?: false
-                Logger.w("Check liked", liked.toString())
+                Logger.d("Check liked", liked.toString())
                 _controlState.value = _controlState.value.copy(isLiked = liked)
                 onUpdateNotification.invoke(
                     listOf(
@@ -1001,7 +1001,7 @@ class JvmMediaPlayerHandlerImpl(
 
     override fun stopProgressUpdate() {
         progressJob?.cancel()
-        Logger.w(TAG, "stopProgressUpdate: ${progressJob?.isActive}")
+        Logger.d(TAG, "stopProgressUpdate: ${progressJob?.isActive}")
     }
 
     override fun stopBufferedUpdate() {
@@ -1059,7 +1059,7 @@ class JvmMediaPlayerHandlerImpl(
     override suspend fun onPlayerEvent(playerEvent: PlayerEvent) {
         when (playerEvent) {
             is PlayerEvent.UpdateVolume -> {
-                Logger.w(TAG, "onPlayerEvent: UpdateVolume ${playerEvent.newVolume}")
+                Logger.d(TAG, "onPlayerEvent: UpdateVolume ${playerEvent.newVolume}")
                 player.volume = playerEvent.newVolume
             }
 
@@ -1207,7 +1207,7 @@ class JvmMediaPlayerHandlerImpl(
     }
 
     override fun toggleLike() {
-        Logger.w(TAG, "toggleLike: ${nowPlayingState.value.mediaItem.mediaId}")
+        Logger.d(TAG, "toggleLike: ${nowPlayingState.value.mediaItem.mediaId}")
         toggleLikeJob?.cancel()
         toggleLikeJob =
             coroutineScope.launch {
@@ -1417,7 +1417,7 @@ class JvmMediaPlayerHandlerImpl(
         coroutineScope.launch {
             if (playlistId.startsWith(LOCAL_PLAYLIST_ID)) {
                 songRepository.insertSong(firstPlayedTrack.toSongEntity()).collect {
-                    Logger.w(TAG, "Inserted song: ${firstPlayedTrack.title}")
+                    Logger.d(TAG, "Inserted song: ${firstPlayedTrack.title}")
                 }
                 clearMediaItems()
                 firstPlayedTrack.durationSeconds?.let {
@@ -1427,7 +1427,7 @@ class JvmMediaPlayerHandlerImpl(
                 val longId = playlistId.replace(LOCAL_PLAYLIST_ID, "").toLong()
                 val localPlaylist = localPlaylistRepository.getLocalPlaylist(longId).lastOrNull()?.data
                 if (localPlaylist != null) {
-                    Logger.w(TAG, "shufflePlaylist: Local playlist track size ${localPlaylist.tracks?.size}")
+                    Logger.d(TAG, "shufflePlaylist: Local playlist track size ${localPlaylist.tracks?.size}")
                     val trackCount = localPlaylist.tracks?.size ?: return@launch
                     val listPosition =
                         (0 until trackCount).toMutableList().apply {
@@ -1456,9 +1456,9 @@ class JvmMediaPlayerHandlerImpl(
         // Local Add Prefix to PlaylistID to differentiate between local and remote
         // Local: LC-PlaylistID
         val playlistId = _queueData.value.data.playlistId ?: return
-        Logger.w("Check loadMore", playlistId.toString())
+        Logger.d("Check loadMore", playlistId.toString())
         val continuation = _queueData.value.data.continuation
-        Logger.w("Check loadMore", continuation.toString())
+        Logger.d("Check loadMore", continuation.toString())
         if (continuation != null) {
             if (playlistId.startsWith(LOCAL_PLAYLIST_ID)) {
                 coroutineScope.launch {
@@ -1473,7 +1473,7 @@ class JvmMediaPlayerHandlerImpl(
                         } catch (e: NumberFormatException) {
                             return@launch
                         }
-                    Logger.w("Check loadMore", longId.toString())
+                    Logger.d("Check loadMore", longId.toString())
                     if (continuation.startsWith("SHUFFLE")) {
                         val regex = Regex("(?<=SHUFFLE)\\d+(?=_)")
                         var offset = regex.find(continuation)?.value?.toInt() ?: return@launch
@@ -1486,7 +1486,7 @@ class JvmMediaPlayerHandlerImpl(
                                 listPosition.subList(50 * offset, if (theLastLoad) listPosition.size else 50 * (offset + 1)),
                             ).singleOrNull()
                             ?.let { pair ->
-                                Logger.w("Check loadMore response", pair.size.toString())
+                                Logger.d("Check loadMore response", pair.size.toString())
                                 songRepository.getSongsByListVideoId(pair.map { it.songId }).lastOrNull()?.let { songs ->
                                     if (songs.isNotEmpty()) {
                                         delay(300)
@@ -1550,7 +1550,7 @@ class JvmMediaPlayerHandlerImpl(
                                         localDateTime,
                                     ).lastOrNull()
                                     ?.let { pair ->
-                                        Logger.w("Check loadMore response", pair.size.toString())
+                                        Logger.d("Check loadMore response", pair.size.toString())
                                         songRepository.getSongsByListVideoId(pair.map { it.songId }).single().let { songs ->
                                             if (songs.isNotEmpty()) {
                                                 delay(300)
@@ -1602,7 +1602,7 @@ class JvmMediaPlayerHandlerImpl(
                                         filter,
                                     ).lastOrNull()
                                     ?.let { pair ->
-                                        Logger.w("Check loadMore response", pair.size.toString())
+                                        Logger.d("Check loadMore response", pair.size.toString())
                                         songRepository.getSongsByListVideoId(pair.map { it.songId }).single().let { songs ->
                                             if (songs.isNotEmpty()) {
                                                 delay(300)
@@ -1643,7 +1643,7 @@ class JvmMediaPlayerHandlerImpl(
                             queueState = QueueData.StateSource.STATE_INITIALIZING,
                         )
                     }
-                    Logger.w(TAG, "Check loadMore continuation $continuation")
+                    Logger.d(TAG, "Check loadMore continuation $continuation")
                     songRepository
                         .getContinueTrack(playlistId, continuation)
                         .lastOrNull()
@@ -1670,13 +1670,13 @@ class JvmMediaPlayerHandlerImpl(
                                     )
                                 }
                                 if (runBlocking { dataStoreManager.endlessQueue.first() } == TRUE) {
-                                    Logger.w(TAG, "loadMore: Endless Queue")
+                                    Logger.d(TAG, "loadMore: Endless Queue")
                                     val lastTrack =
                                         queueData.value.data.listTracks
                                             .lastOrNull() ?: return@launch
                                     val radioId = "RDAMVM${lastTrack.videoId}"
                                     if (radioId == queueData.value.data.playlistId) {
-                                        Logger.w(TAG, "loadMore: Already in radio mode")
+                                        Logger.d(TAG, "loadMore: Already in radio mode")
                                         return@launch
                                     }
                                     _queueData.update {
@@ -1700,7 +1700,7 @@ class JvmMediaPlayerHandlerImpl(
                 }
             }
         } else if (runBlocking { dataStoreManager.endlessQueue.first() } == TRUE) {
-            Logger.w(TAG, "loadMore: Endless Queue")
+            Logger.d(TAG, "loadMore: Endless Queue")
             val lastTrack =
                 queueData.value.data.listTracks
                     .lastOrNull() ?: return
@@ -2008,8 +2008,8 @@ class JvmMediaPlayerHandlerImpl(
         val current = if (index != null) tempQueue.getOrNull(index) else null
         chunkedList.forEach { list ->
             val catalogMetadata: ArrayList<Track> = arrayListOf()
-            Logger.w("SimpleMediaServiceHandler", "Catalog size: ${tempQueue.size}")
-            Logger.w("SimpleMediaServiceHandler", "Skip index: $index")
+            Logger.d("SimpleMediaServiceHandler", "Catalog size: ${tempQueue.size}")
+            Logger.d("SimpleMediaServiceHandler", "Skip index: $index")
             for (i in list.indices) {
                 val track = list[i]
                 if (track == current) continue
@@ -2197,7 +2197,7 @@ class JvmMediaPlayerHandlerImpl(
                 it.addToIndex(current, index)
             }
         }
-        Logger.w("SimpleMediaServiceHandler", "current queue: ${player.mediaItemCount}")
+        Logger.d("SimpleMediaServiceHandler", "current queue: ${player.mediaItemCount}")
         return true
     }
 
@@ -2595,7 +2595,7 @@ class JvmMediaPlayerHandlerImpl(
         }
 
     override fun release() {
-        Logger.w("ServiceHandler", "Starting release process")
+        Logger.d("ServiceHandler", "Starting release process")
         nypc?.removeListener()
         if (nypc != null) runCatching { JMTC.getInstance(JMTCSettings("SimpMusic", "")).setCallbacks(JMTCCallbacks()) }
         // Release macOS media integration
@@ -2656,7 +2656,7 @@ class JvmMediaPlayerHandlerImpl(
             coroutineScope.cancel()
             backgroundScope.cancel()
 
-            Logger.w("ServiceHandler", "Handler released successfully. Scope active: ${coroutineScope.isActive}")
+            Logger.d("ServiceHandler", "Handler released successfully. Scope active: ${coroutineScope.isActive}")
         } catch (e: Exception) {
             Logger.e("ServiceHandler", "Error during release ${e.message}")
         }
@@ -2745,21 +2745,21 @@ class JvmMediaPlayerHandlerImpl(
         reason: Int,
     ) {
         resetPositionSmoothing()
-        Logger.w(TAG, "Checking current state before transition ${simpleMediaState.value}")
+        Logger.d(TAG, "Checking current state before transition ${simpleMediaState.value}")
         val lastPlayed = nowPlayingState.value.songEntity
         val currentState = simpleMediaState.value
         if (currentState is SimpleMediaState.Progress && lastPlayed != null && lastPlayed.durationSeconds > 0) {
             mayBeTrackingListeningLocal(lastPlayed, currentState.progress)
         }
-        Logger.w(TAG, "Smooth Switching Transition Current Position: ${player.currentPosition}")
+        Logger.d(TAG, "Smooth Switching Transition Current Position: ${player.currentPosition}")
         mayBeNormalizeVolume()
-        Logger.w(TAG, "REASON onMediaItemTransition: $reason")
+        Logger.d(TAG, "REASON onMediaItemTransition: $reason")
         Logger.d(TAG, "Media Item Transition Media Item: ${mediaItem?.metadata?.title}")
         if (mediaItem?.mediaId != _nowPlaying.value?.mediaId) {
             _nowPlaying.value = mediaItem
         }
         if (mediaItem?.mediaId != nowPlayingState.value.mediaItem.mediaId) {
-            Logger.w(TAG, "onMediaItemTransition: ${mediaItem?.mediaId}")
+            Logger.d(TAG, "onMediaItemTransition: ${mediaItem?.mediaId}")
             if (mediaItem != null) {
                 getDataOfNowPlayingState(mediaItem)
             } else {
@@ -2802,7 +2802,7 @@ class JvmMediaPlayerHandlerImpl(
                 return@launch
             }
             val percent = (currentPositionMillis / (song.durationSeconds * 1000f))
-            Logger.w(TAG, "${song.title} - $currentPositionMillis ms listened, duration: ${song.durationSeconds * 1000} ms, percent: $percent")
+            Logger.d(TAG, "${song.title} - $currentPositionMillis ms listened, duration: ${song.durationSeconds * 1000} ms, percent: $percent")
             if (percent < 0.2f) {
                 Logger.d(TAG, "Not enough listening time for ${song.title}, skipping tracking")
                 return@launch

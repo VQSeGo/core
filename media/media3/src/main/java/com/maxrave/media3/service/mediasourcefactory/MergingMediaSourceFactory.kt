@@ -46,7 +46,7 @@ internal class MergingMediaSourceFactory(
         if (LiveStreamRegistry.isLive(mediaItem.mediaId)) {
             // One HLS playlist carrying audio and video together: no merge, and none of the
             // progressive resolver's caching or chunking.
-            Logger.w("Merging Media Source", "${mediaItem.mediaId} is live; building an HLS source")
+            Logger.d("Merging Media Source", "${mediaItem.mediaId} is live; building an HLS source")
             return liveStreamMediaSourceFactory.createMediaSource(
                 mediaItem
                     .buildUpon()
@@ -55,9 +55,9 @@ internal class MergingMediaSourceFactory(
                     .build(),
             )
         }
-        Logger.w("Merging Media Source", mediaItem.mediaMetadata.description.toString())
+        Logger.d("Merging Media Source", mediaItem.mediaMetadata.description.toString())
         val getVideo = runBlocking(Dispatchers.IO) { dataStoreManager.watchVideoInsteadOfPlayingAudio.first() } == DataStoreManager.Values.TRUE
-        Logger.w("Merging Media Source", getVideo.toString())
+        Logger.d("Merging Media Source", getVideo.toString())
         val isClip = mediaItem.mediaMetadata.description == MERGING_DATA_TYPE.VIDEO && getVideo
         if (isClip && isAudioOnlyDownload(mediaItem.mediaId)) {
             // Downloaded while video playback was off: the audio is on disk, the video is not.

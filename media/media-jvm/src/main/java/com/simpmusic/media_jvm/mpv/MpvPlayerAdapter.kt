@@ -1113,7 +1113,7 @@ class MpvPlayerAdapter(
     override var volume: Float
         get() = internalVolume
         set(value) {
-            Logger.w(TAG, "Setting volume to $value")
+            Logger.d(TAG, "Setting volume to $value")
             internalVolume = value.coerceIn(0f, 1f)
             // Same hop as sleepFadeFactor below, and for the same reason: writing mpv properties
             // straight from the caller's thread races the player thread that releases handles, and
@@ -1854,7 +1854,7 @@ class MpvPlayerAdapter(
                     // to avoid showing a loading spinner when user has explicitly paused.
                     val isStalled = newCache < 100f && cachedBufferedPosition <= cachedPosition && internalPlayWhenReady
                     if (isStalled != cachedIsLoading) {
-                        Logger.w(TAG, "isLoading changed: $cachedIsLoading -> $isStalled")
+                        Logger.d(TAG, "isLoading changed: $cachedIsLoading -> $isStalled")
                         cachedIsLoading = isStalled
                         notifyListeners { onIsLoadingChanged(isStalled) }
                     }
@@ -2072,7 +2072,7 @@ class MpvPlayerAdapter(
             // trigger window, and a line repeating five times a second buries everything else.
             if (lastBlockedCrossfadeIndex != nextIndex) {
                 lastBlockedCrossfadeIndex = nextIndex
-                Logger.w(
+                Logger.d(
                     TAG,
                     "Crossfade not started: nextIndex=$nextIndex, playlistSize=${playlist.size}, " +
                         "isCrossfading=$isCrossfading, currentIndex=$localCurrentMediaItemIndex",
@@ -2878,7 +2878,7 @@ class MpvPlayerAdapter(
     }
 
     private suspend fun resolvePlayableUrl(mediaItem: GenericMediaItem): PlayableSource? {
-        Logger.w(TAG, "Extracting playable URL for ${mediaItem.mediaId}")
+        Logger.d(TAG, "Extracting playable URL for ${mediaItem.mediaId}")
         val shouldFindVideo =
             mediaItem.isVideo() &&
                 dataStoreManager.watchVideoInsteadOfPlayingAudio.first() == DataStoreManager.TRUE
@@ -2916,7 +2916,7 @@ class MpvPlayerAdapter(
                             null
                         }
 
-                    Logger.w("Stream", "Video from format (with audio stream: ${audioSlave != null})")
+                    Logger.d("Stream", "Video from format (with audio stream: ${audioSlave != null})")
                     Logger.i("Offline", "source $videoId saved-url")
                     return PlayableSource(
                         isVideo = true,
@@ -2929,7 +2929,7 @@ class MpvPlayerAdapter(
                 val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
                 Logger.i("Offline", "resolve $videoId saved-is403 ${(System.nanoTime() - checkStarted) / 1_000_000} rejected=$is403Url")
                 if (!is403Url) {
-                    Logger.w("Stream", "Audio from format")
+                    Logger.d("Stream", "Audio from format")
                     Logger.i("Offline", "source $videoId saved-url")
                     return PlayableSource(isVideo = false, url = audioUrl)
                 }

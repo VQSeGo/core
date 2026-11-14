@@ -1295,7 +1295,7 @@ internal class CrossfadeExoPlayerAdapter(
     override var volume: Float
         get() = internalVolume
         set(value) {
-            Logger.w(TAG, "Setting volume to $value")
+            Logger.d(TAG, "Setting volume to $value")
             internalVolume = value.coerceIn(0f, 1f)
             currentPlayer?.volume = internalVolume
             listeners.forEach { it.onVolumeChanged(internalVolume) }
