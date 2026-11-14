@@ -54,7 +54,6 @@ import com.maxrave.kotlinytmusicscraper.models.response.SearchResponse
 import com.maxrave.kotlinytmusicscraper.models.response.SimpMusicChartResponse
 import com.maxrave.kotlinytmusicscraper.models.response.toLikeStatus
 import com.maxrave.kotlinytmusicscraper.models.response.toListAccountInfo
-import com.maxrave.kotlinytmusicscraper.models.simpmusic.FdroidResponse
 import com.maxrave.kotlinytmusicscraper.models.simpmusic.GithubResponse
 import com.maxrave.kotlinytmusicscraper.models.youtube.GhostResponse
 import com.maxrave.kotlinytmusicscraper.models.youtube.Transcript
@@ -940,11 +939,6 @@ class YouTube {
     suspend fun checkForGithubReleaseUpdate(): Result<GithubResponse> =
         runCatching {
             ytMusic.checkForGithubReleaseUpdate().body<GithubResponse>()
-        }
-
-    suspend fun checkForFdroidUpdate(): Result<FdroidResponse> =
-        runCatching {
-            ytMusic.checkForFdroidUpdate().body<FdroidResponse>()
         }
 
     suspend fun newRelease(): Result<ExplorePage> =

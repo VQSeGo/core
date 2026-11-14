@@ -337,10 +337,6 @@ interface DataStoreManager {
 
     suspend fun setAutoCheckForUpdates(autoCheck: Boolean)
 
-    val updateChannel: Flow<String>
-
-    suspend fun setUpdateChannel(channel: String)
-
     val playbackSpeed: Flow<Float>
 
     fun setPlaybackSpeed(speed: Float)
@@ -527,10 +523,6 @@ interface DataStoreManager {
         const val LRCLIB = "lrclib"
         const val BETTER_LYRICS = "better_lyrics"
         const val SPOTIFY = "spotify"
-
-        const val FDROID = "fdroid"
-        const val GITHUB_FOSS_NIGHTLY = "github_foss_nightly"
-        const val GITHUB = "github_release"
 
         const val REPEAT_MODE_OFF = "REPEAT_MODE_OFF"
         const val REPEAT_ONE = "REPEAT_ONE"
