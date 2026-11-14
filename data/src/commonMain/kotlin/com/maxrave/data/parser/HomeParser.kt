@@ -207,7 +207,7 @@ internal fun parseMixedContent(
                                             Logger.i("parse_mixed_content", "Removed last artist")
                                         }.onFailure {
                                             Logger.e("parse_mixed_content", "Failed to remove last artist")
-                                            it.printStackTrace()
+                                            Logger.e("HomeParser", "parseMixedContent failed: ${it.message}", it)
                                         }
                                 }
                                 if (ytItem != null) {
@@ -264,7 +264,7 @@ internal fun parseMixedContent(
                                             Logger.i("parse_mixed_content", "Removed last artist")
                                         }.onFailure {
                                             Logger.e("parse_mixed_content", "Failed to remove last artist")
-                                            it.printStackTrace()
+                                            Logger.e("HomeParser", "parseMixedContent failed: ${it.message}", it)
                                         }
                                 }
                                 if (ytItem != null) {
@@ -831,7 +831,7 @@ internal fun parseNewRelease(
                                 Logger.i("parse_mixed_content", "Removed last artist")
                             }.onFailure {
                                 Logger.e("parse_mixed_content", "Failed to remove last artist")
-                                it.printStackTrace()
+                                Logger.e("HomeParser", "parseNewRelease failed: ${it.message}", it)
                             }
                     }
                     Content(

@@ -73,7 +73,7 @@ class SpotifyAuth(
                         totpVersion = totpSecret?.first ?: SpotifyTotp.TOTP_SECRET_V22.first,
                     )
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Logger.e("SpotifyAuth", "refreshToken failed: ${e.message}", e)
                     null
                 }
 
@@ -81,7 +81,7 @@ class SpotifyAuth(
                 try {
                     response?.body<PersonalTokenResponse>()
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Logger.e("SpotifyAuth", "refreshToken failed: ${e.message}", e)
                     null
                 }
 

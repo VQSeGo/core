@@ -1206,7 +1206,7 @@ class Ytmusic {
                     timeout { requestTimeoutMillis = 3_000 }
                 }.status.value in 400..499
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("Ytmusic", "is403Url failed: ${e.message}", e)
             true
         }
     }

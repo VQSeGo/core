@@ -235,7 +235,7 @@ class YouTube {
         }.onSuccess {
             ytMusic.proxy = it
         }.onFailure {
-            it.printStackTrace()
+            Logger.e("YouTube", "setProxy failed: ${it.message}", it)
         }
     }
 
@@ -1341,7 +1341,7 @@ class YouTube {
             Logger.d(TAG, "Playback Tracking $playbackTracking")
             return Triple(cookie, visitorData ?: this@YouTube.visitorData ?: "", playbackTracking)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("YouTube", "onText failed: ${e.message}", e)
             return Triple("", "", null)
         }
     }
@@ -1956,7 +1956,7 @@ class YouTube {
                 .first { (it as? JsonPrimitive)?.content?.let(VISITOR_DATA_REGEX::containsMatchIn) == true }
                 .jsonPrimitive.content
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("YouTube", "visitorData failed: ${e.message}", e)
             null
         }
 
@@ -2072,7 +2072,7 @@ class YouTube {
                     ).body<Transcript>()
                     .tryDecodeText()
             } catch (e: Exception) {
-                e.printStackTrace()
+                Logger.e("YouTube", "getYouTubeCaption failed: ${e.message}", e)
                 null
             }
         return@runCatching baseCaption to translateCaption
@@ -2318,7 +2318,7 @@ class YouTube {
                         }.onSuccess {
                             Logger.d(TAG, "Download Video Success")
                         }.onFailure {
-                            it.printStackTrace()
+                            Logger.e("YouTube", "download failed: ${it.message}", it)
                             trySend(DownloadProgress.failed(it.message ?: "Download failed"))
                         }
                     } else {
@@ -2345,12 +2345,12 @@ class YouTube {
                                 ),
                             )
                         }.onFailure { e ->
-                            e.printStackTrace()
+                            Logger.e("YouTube", "download failed: ${e.message}", e)
                             trySend(DownloadProgress.failed(e.message ?: "Download failed"))
                         }
                     }
                 }.onFailure {
-                    it.printStackTrace()
+                    Logger.e("YouTube", "download failed: ${it.message}", it)
                     Logger.d(TAG, "Player Response is null")
                     trySend(DownloadProgress.failed(it.message ?: "Player response is null"))
                 }

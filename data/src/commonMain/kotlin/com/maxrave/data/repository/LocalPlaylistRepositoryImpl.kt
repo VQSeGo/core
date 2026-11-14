@@ -421,7 +421,7 @@ internal class LocalPlaylistRepositoryImpl(
                 }
         } else {
             val e = res.exceptionOrNull()
-            e?.printStackTrace()
+            Logger.e("LocalPlaylistRepositoryImpl", "syncLocalPlaylistToYouTubePlaylist failed: ${e?.message}", e)
             emit(LocalResource.Error(e?.message ?: errorMessage))
         }
     }
@@ -552,7 +552,7 @@ internal class LocalPlaylistRepositoryImpl(
                         }
                     }.onFailure { e ->
                         Logger.e(TAG, "updateListTrackSynced: onFailure ${e.message}")
-                        e.printStackTrace()
+                        Logger.e("LocalPlaylistRepositoryImpl", "updateListTrackSynced failed: ${e.message}", e)
                         emit(false)
                     }
             }
@@ -698,7 +698,7 @@ internal class LocalPlaylistRepositoryImpl(
                         emit(LocalResource.Error("List suggestions is null"))
                     }
                 }.onFailure { e ->
-                    e.printStackTrace()
+                    Logger.e("LocalPlaylistRepositoryImpl", "getSuggestionsTrackForPlaylist failed: ${e.message}", e)
                     emit(LocalResource.Error(e.message ?: "Error"))
                 }
         }
@@ -741,7 +741,7 @@ internal class LocalPlaylistRepositoryImpl(
                             emit(LocalResource.Error("Empty data"))
                         }
                     }.onFailure { exception ->
-                        exception.printStackTrace()
+                        Logger.e("LocalPlaylistRepositoryImpl", "reloadSuggestionPlaylist failed: ${exception.message}", exception)
                         emit(LocalResource.Error(exception.message ?: "Error"))
                     }
             }
@@ -831,7 +831,7 @@ internal class LocalPlaylistRepositoryImpl(
                             emit(playlist)
                         }
                     }.onFailure { e ->
-                        e.printStackTrace()
+                        Logger.e("LocalPlaylistRepositoryImpl", "getYouTubeSetVideoId failed: ${e.message}", e)
                         emit(emptyList())
                     }
             }

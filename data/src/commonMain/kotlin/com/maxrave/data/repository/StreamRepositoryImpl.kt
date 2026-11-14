@@ -330,7 +330,7 @@ internal class StreamRepositoryImpl(
                         )
                     }
                 }.onFailure {
-                    it.printStackTrace()
+                    Logger.e("StreamRepositoryImpl", "getStream failed: ${it.message}", it)
                     Logger.e("Stream", "Error: ${it.message}")
                     emit(null)
                 }
@@ -366,7 +366,7 @@ internal class StreamRepositoryImpl(
                     .onSuccess { response ->
                         emit(response)
                     }.onFailure {
-                        it.printStackTrace()
+                        Logger.e("StreamRepositoryImpl", "updateWatchTimeFull failed: ${it.message}", it)
                         emit(0)
                     }
             }
@@ -389,7 +389,7 @@ internal class StreamRepositoryImpl(
                     ).onSuccess { response ->
                         emit(response)
                     }.onFailure {
-                        it.printStackTrace()
+                        Logger.e("StreamRepositoryImpl", "updateWatchTime failed: ${it.message}", it)
                         emit(0)
                     }
             }

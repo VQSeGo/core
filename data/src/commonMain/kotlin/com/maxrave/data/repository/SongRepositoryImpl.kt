@@ -547,7 +547,7 @@ internal class SongRepositoryImpl(
                             newContinuation = next.continuation
                             emit(Pair(data.toListTrack(), newContinuation))
                         }.onFailure { exception ->
-                            exception.printStackTrace()
+                            Logger.e("SongRepositoryImpl", "getContinueTrack failed: ${exception.message}", exception)
                             emit(Pair(null, null))
                         }
                 } else {
@@ -617,7 +617,7 @@ internal class SongRepositoryImpl(
                             song,
                         )
                     }.onFailure {
-                        it.printStackTrace()
+                        Logger.e("SongRepositoryImpl", "getSongInfo failed: ${it.message}", it)
                         emit(getSongInfoEntity(videoId).lastOrNull())
                     }
             }
@@ -643,7 +643,7 @@ internal class SongRepositoryImpl(
                             },
                         )
                     }.onFailure {
-                        it.printStackTrace()
+                        Logger.e("SongRepositoryImpl", "getLikeStatus failed: ${it.message}", it)
                         emit(YouTubeLikeStatus.INDIFFERENT)
                     }
             }
@@ -659,7 +659,7 @@ internal class SongRepositoryImpl(
                             Logger.d(TAG, "Liked -> Success: $it")
                             emit(it)
                         }.onFailure {
-                            it.printStackTrace()
+                            Logger.e("SongRepositoryImpl", "addToYouTubeLiked failed: ${it.message}", it)
                             emit(0)
                         }
                 }
@@ -676,7 +676,7 @@ internal class SongRepositoryImpl(
                             Logger.d(TAG, "Disliked -> Success: $it")
                             emit(it)
                         }.onFailure {
-                            it.printStackTrace()
+                            Logger.e("SongRepositoryImpl", "addToYouTubeDisliked failed: ${it.message}", it)
                             emit(0)
                         }
                 }
@@ -693,7 +693,7 @@ internal class SongRepositoryImpl(
                             Logger.d(TAG, "Liked -> Success: $it")
                             emit(it)
                         }.onFailure {
-                            it.printStackTrace()
+                            Logger.e("SongRepositoryImpl", "removeFromYouTubeLiked failed: ${it.message}", it)
                             emit(0)
                         }
                 }
@@ -762,7 +762,7 @@ internal class SongRepositoryImpl(
                         val nextContinuation = next.continuation
                         emit(Resource.Success<Pair<List<Track>, String?>>(Pair(data.toListTrack().toList(), nextContinuation)))
                     }.onFailure { exception ->
-                        exception.printStackTrace()
+                        Logger.e("SongRepositoryImpl", "getRelatedData failed: ${exception.message}", exception)
                         emit(Resource.Error<Pair<List<Track>, String?>>(exception.message.toString()))
                     }
             }
@@ -780,7 +780,7 @@ internal class SongRepositoryImpl(
                             )
                         emit(Resource.Success(Pair(items.toListTrack(), next.continuation)))
                     }.onFailure {
-                        it.printStackTrace()
+                        Logger.e("SongRepositoryImpl", "getRadioFromEndpoint failed: ${it.message}", it)
                         emit(Resource.Error(it.message ?: "Error"))
                     }
             }

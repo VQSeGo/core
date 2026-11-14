@@ -386,7 +386,7 @@ class JvmMediaPlayerHandlerImpl(
         try {
             value?.let { json.decodeFromString<List<Int>>(it) }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("JvmMediaPlayerHandlerImpl", "fromStringToListInt failed: ${e.message}", e)
             null
         }
 

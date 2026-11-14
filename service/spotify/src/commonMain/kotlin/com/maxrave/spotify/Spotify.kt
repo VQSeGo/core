@@ -1,5 +1,6 @@
 package com.maxrave.spotify
 
+import com.maxrave.logger.Logger
 import com.maxrave.spotify.auth.SpotifyAuth
 import com.maxrave.spotify.model.response.spotify.ClientTokenResponse
 import com.maxrave.spotify.model.response.spotify.PersonalTokenResponse
@@ -40,7 +41,7 @@ class Spotify {
         }.onSuccess {
             spotifyClient.proxy = it
         }.onFailure {
-            it.printStackTrace()
+            Logger.e("Spotify", "setProxy failed: ${it.message}", it)
         }
     }
 

@@ -271,7 +271,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
                 FileSystem.SYSTEM.delete("$filePath.mp4".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "mergeAudioVideoDownload failed: ${e.message}", e)
             }
             return (DownloadProgress.VIDEO_DONE)
         } else if (ReturnCode.isCancel(session.returnCode)) {
@@ -282,7 +282,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
                 FileSystem.SYSTEM.delete("$filePath.mp4".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "mergeAudioVideoDownload failed: ${e.message}", e)
             }
             return (DownloadProgress.failed(session.failStackTrace ?: "Command cancelled"))
         } else {
@@ -293,7 +293,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
                 FileSystem.SYSTEM.delete("$filePath.mp4".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "mergeAudioVideoDownload failed: ${e.message}", e)
             }
             return (DownloadProgress.failed(session.failStackTrace ?: "FFmpeg command failed"))
         }
@@ -319,7 +319,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath-simpmusic.mp3".toPath())
             }
         } catch (e: IOException) {
-            e.printStackTrace()
+            Logger.e("Extractor", "saveAudioWithThumbnail failed: ${e.message}", e)
         }
 
         val session =
@@ -332,7 +332,7 @@ actual class Extractor {
             try {
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "saveAudioWithThumbnail failed: ${e.message}", e)
             }
         } else if (ReturnCode.isCancel(session.returnCode)) {
             // CANCEL
@@ -341,7 +341,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath.jpg".toPath())
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "saveAudioWithThumbnail failed: ${e.message}", e)
             }
             return (DownloadProgress.failed("Error"))
         } else {
@@ -351,7 +351,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath.jpg".toPath())
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "saveAudioWithThumbnail failed: ${e.message}", e)
             }
             return (DownloadProgress.failed("Error"))
         }
@@ -386,7 +386,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath.jpg".toPath())
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "saveAudioWithThumbnail failed: ${e.message}", e)
             }
             return (DownloadProgress.AUDIO_DONE)
         } else if (ReturnCode.isCancel(sessionInject.returnCode)) {
@@ -397,7 +397,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
                 FileSystem.SYSTEM.delete("$filePath-simpmusic.mp3".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "saveAudioWithThumbnail failed: ${e.message}", e)
             }
             return (DownloadProgress.failed("Error"))
         } else {
@@ -408,7 +408,7 @@ actual class Extractor {
                 FileSystem.SYSTEM.delete("$filePath.webm".toPath())
                 FileSystem.SYSTEM.delete("$filePath-simpmusic.mp3".toPath())
             } catch (e: IOException) {
-                e.printStackTrace()
+                Logger.e("Extractor", "saveAudioWithThumbnail failed: ${e.message}", e)
             }
             return (DownloadProgress.failed("Error"))
         }

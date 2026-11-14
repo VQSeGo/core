@@ -158,7 +158,7 @@ internal class PodcastRepositoryImpl(
                                             ?.nextContinuationData
                                             ?.continuation
                                 }.onFailure {
-                                    it.printStackTrace()
+                                    Logger.e("PodcastRepositoryImpl", "getPodcastData failed: ${it.message}", it)
                                     continueParam = null
                                 }
                         }

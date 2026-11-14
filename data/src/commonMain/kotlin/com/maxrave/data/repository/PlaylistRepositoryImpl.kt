@@ -198,7 +198,7 @@ internal class PlaylistRepositoryImpl(
                             Logger.w("Repository", "playlistBrowse: $playlistBrowse")
                             emit(Resource.Success<Pair<PlaylistBrowse, String?>>(Pair(playlistBrowse, continuation)))
                         }.onFailure { exception ->
-                            exception.printStackTrace()
+                            Logger.e("PlaylistRepositoryImpl", "getRadio failed: ${exception.message}", exception)
                             emit(Resource.Error<Pair<PlaylistBrowse, String?>>(exception.message.toString()))
                         }
                 }
@@ -537,7 +537,7 @@ internal class PlaylistRepositoryImpl(
                                 >("Error"),
                             )
                         } catch (e: Exception) {
-                            e.printStackTrace()
+                            Logger.e("PlaylistRepositoryImpl", "getPlaylistData failed: ${e.message}", e)
                             emit(
                                 Resource.Error<
                                     Pair<PlaylistBrowse, String?>,
@@ -609,7 +609,7 @@ internal class PlaylistRepositoryImpl(
                                     parseNextLibraryPlaylist(nextInput),
                                 )
                             }.onFailure { exception ->
-                                exception.printStackTrace()
+                                Logger.e("PlaylistRepositoryImpl", "getLibraryPlaylist failed: ${exception.message}", exception)
                                 Logger.e("Library", "Error: ${exception.message}")
                                 continuation = null
                             }
@@ -633,7 +633,7 @@ internal class PlaylistRepositoryImpl(
                     }
                 }.onFailure { e ->
                     Logger.e("Library", "Error: ${e.message}")
-                    e.printStackTrace()
+                    Logger.e("PlaylistRepositoryImpl", "getLibraryPlaylist failed: ${e.message}", e)
                     val account = localDataSource.getUsedGoogleAccount()
                     val isNeeded =
                         dataStoreManager.keepYouTubePlaylistOffline.first() == DataStoreManager.TRUE &&
@@ -728,7 +728,7 @@ internal class PlaylistRepositoryImpl(
                                     parseNextLibraryPlaylist(nextInput),
                                 )
                             }.onFailure { exception ->
-                                exception.printStackTrace()
+                                Logger.e("PlaylistRepositoryImpl", "getMixedForYou failed: ${exception.message}", exception)
                                 Logger.e("Mixed For You", "Error: ${exception.message}")
                                 continuation = null
                             }
@@ -785,7 +785,7 @@ internal class PlaylistRepositoryImpl(
                         }
                     emit(Resource.Success(result))
                 }.onFailure { exception ->
-                    exception.printStackTrace()
+                    Logger.e("PlaylistRepositoryImpl", "getChartPlaylist failed: ${exception.message}", exception)
                     emit(Resource.Error<List<ChartItem>>(exception.message ?: "Unknown error"))
                 }
         }.flowOn(Dispatchers.IO)

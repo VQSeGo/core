@@ -300,7 +300,7 @@ internal class MediaServiceHandlerImpl(
         try {
             value?.let { json.decodeFromString<List<Int>>(it) }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("MediaServiceHandlerImpl", "fromStringToListInt failed: ${e.message}", e)
             null
         }
 
@@ -2323,7 +2323,7 @@ internal class MediaServiceHandlerImpl(
                 loudnessEnhancer = LoudnessEnhancer(player.audioSessionId)
             } catch (e: Exception) {
                 Logger.e(TAG, "mayBeNormalizeVolume: ${e.message}")
-                e.printStackTrace()
+                Logger.e("MediaServiceHandlerImpl", "mayBeNormalizeVolume failed: ${e.message}", e)
             }
         }
 
@@ -2362,7 +2362,7 @@ internal class MediaServiceHandlerImpl(
                                     )
                                 } catch (e: Exception) {
                                     Logger.e(TAG, "mayBeNormalizeVolume: ${e.message}")
-                                    e.printStackTrace()
+                                    Logger.e("MediaServiceHandlerImpl", "mayBeNormalizeVolume failed: ${e.message}", e)
                                 }
                                 try {
                                     secondLoudnessEnhancer?.setTargetGain(0f.toMb() - loudnessMb)
@@ -2373,7 +2373,7 @@ internal class MediaServiceHandlerImpl(
                                     )
                                 } catch (e: Exception) {
                                     Logger.e(TAG, "mayBeNormalizeVolume: ${e.message}")
-                                    e.printStackTrace()
+                                    Logger.e("MediaServiceHandlerImpl", "mayBeNormalizeVolume failed: ${e.message}", e)
                                 }
                             }
                         }

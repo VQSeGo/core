@@ -989,7 +989,7 @@ internal class DataStoreManagerImpl(
                     return@runBlocking null
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Logger.e("DataStoreManagerImpl", "getJVMProxy failed: ${e.message}", e)
                 return@runBlocking null
             }
         }

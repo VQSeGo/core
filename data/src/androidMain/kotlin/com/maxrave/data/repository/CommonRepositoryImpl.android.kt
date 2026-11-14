@@ -1,5 +1,6 @@
 package com.maxrave.data.repository
 
+import com.maxrave.logger.Logger
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteDatabase.OPEN_READONLY
 import android.webkit.CookieManager
@@ -84,7 +85,7 @@ actual fun getCookies(url: String, packageName: String): CookieItem {
             db.close()
             CookieItem(url, cookieList)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("CommonRepositoryImpl", "getCookies failed: ${e.message}", e)
             CookieItem(url, emptyList())
         }
 }

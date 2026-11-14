@@ -134,7 +134,7 @@ internal class LyricsCanvasRepositoryImpl(
                                 dataStoreManager.setSpotifyClientToken(it.grantedToken.token)
                                 spotifyClientToken = it.grantedToken.token
                             }.onFailure {
-                                it.printStackTrace()
+                                Logger.e("LyricsCanvasRepositoryImpl", "getSpotifyLyrics failed: ${it.message}", it)
                                 emit(Resource.Error<Lyrics>("Not found"))
                             }
                         spotify
@@ -146,7 +146,7 @@ internal class LyricsCanvasRepositoryImpl(
                                     it.accessTokenExpirationTimestampMs,
                                 )
                             }.onFailure {
-                                it.printStackTrace()
+                                Logger.e("LyricsCanvasRepositoryImpl", "getSpotifyLyrics failed: ${it.message}", it)
                                 emit(Resource.Error<Lyrics>("Not found"))
                             }
                         if (spotifyPersonalToken.isNotEmpty() && spotifyClientToken.isNotEmpty()) {
@@ -197,7 +197,7 @@ internal class LyricsCanvasRepositoryImpl(
                                     }.onFailure {
                                         if (it is SpotifyUnauthorizedException) unauthorized = true
                                         if (!(unauthorized && retryOnUnauthorized)) {
-                                            it.printStackTrace()
+                                            Logger.e("LyricsCanvasRepositoryImpl", "getSpotifyLyrics failed: ${it.message}", it)
                                             emit(Resource.Error<Lyrics>("Not found"))
                                         }
                                     }
@@ -207,7 +207,7 @@ internal class LyricsCanvasRepositoryImpl(
                         }.onFailure { throwable ->
                             if (throwable is SpotifyUnauthorizedException) unauthorized = true
                             if (!(unauthorized && retryOnUnauthorized)) {
-                                throwable.printStackTrace()
+                                Logger.e("LyricsCanvasRepositoryImpl", "getSpotifyLyrics failed: ${throwable.message}", throwable)
                                 emit(Resource.Error<Lyrics>("Not found"))
                             }
                         }
@@ -261,7 +261,7 @@ internal class LyricsCanvasRepositoryImpl(
                     // offline cache only on an emitted error, and an empty flow skips it.
                     if (it != null) emit(Resource.Success<Lyrics>(it.toLyrics())) else emit(Resource.Error<Lyrics>("Not found"))
                 }.onFailure {
-                    it.printStackTrace()
+                    Logger.e("LyricsCanvasRepositoryImpl", "getLrclibLyricsData failed: ${it.message}", it)
                     emit(Resource.Error<Lyrics>("Not found"))
                 }
         }.flowOn(Dispatchers.IO)
@@ -305,7 +305,7 @@ internal class LyricsCanvasRepositoryImpl(
                     val lyrics = parseTtmlLyrics(ttml).toLyrics()
                     emit(Resource.Success(lyrics))
                 }.onFailure {
-                    it.printStackTrace()
+                    Logger.e("LyricsCanvasRepositoryImpl", "getBetterLyrics failed: ${it.message}", it)
                     emit(Resource.Error<Lyrics>("BetterLyrics search failed"))
                 }
         }.flowOn(Dispatchers.IO)

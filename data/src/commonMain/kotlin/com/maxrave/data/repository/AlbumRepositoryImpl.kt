@@ -117,7 +117,7 @@ internal class AlbumRepositoryImpl(
                             ),
                         )
                     }.onFailure {
-                        it.printStackTrace()
+                        Logger.e("AlbumRepositoryImpl", "getAlbumMore failed: ${it.message}", it)
                         emit(null)
                     }
             }

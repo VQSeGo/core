@@ -1,5 +1,6 @@
 package com.maxrave.data.db
 
+import com.maxrave.logger.Logger
 import androidx.room.ProvidedTypeConverter
 import androidx.room.TypeConverter
 import com.maxrave.domain.data.model.browse.album.Track
@@ -27,7 +28,7 @@ class Converters {
         try {
             value?.let { json.decodeFromString<List<String>>(it) }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("Converters", "fromString failed: ${e.message}", e)
             null
         }
 
@@ -41,7 +42,7 @@ class Converters {
                 json.decodeFromString<List<Track>>(value)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("Converters", "fromStringToListTrack failed: ${e.message}", e)
             null
         }
 
@@ -64,7 +65,7 @@ class Converters {
                 json.decodeFromString<List<Line>>(value)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("Converters", "fromStringToListLine failed: ${e.message}", e)
             null
         }
 
@@ -75,7 +76,7 @@ class Converters {
                 json.decodeFromString<List<String?>>(value)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("Converters", "fromStringNull failed: ${e.message}", e)
             null
         }
 
