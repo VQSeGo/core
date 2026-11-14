@@ -724,6 +724,22 @@ internal class SongRepositoryImpl(
                 )
             }
 
+    override fun downloadStreamToFile(
+        url: String,
+        path: String,
+    ): Flow<DownloadProgress> =
+        youTube.downloadUrl(url, path).map {
+            DownloadProgress(
+                audioDownloadProgress = it.audioDownloadProgress,
+                videoDownloadProgress = it.videoDownloadProgress,
+                downloadSpeed = it.downloadSpeed,
+                errorMessage = it.errorMessage,
+                isMerging = it.isMerging,
+                isError = it.isError,
+                isDone = it.isDone,
+            )
+        }
+
     override fun getRelatedData(videoId: String): Flow<Resource<Pair<List<Track>, String?>>> =
         flow {
             runCatching {

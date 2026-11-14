@@ -9,7 +9,7 @@ interface CacheRepository {
 
     /**
      * Songs whose audio sits in the player cache in full, so they play with no network. A track
-     * skipped halfway is left out. Always empty where there is no on-disk player cache (Desktop).
+     * skipped halfway is left out. On Desktop, the files of the listening cache (`~/.simpmusic/cache`).
      */
     suspend fun getFullyCachedSongIds(): List<String>
 

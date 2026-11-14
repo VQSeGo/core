@@ -168,6 +168,12 @@ interface SongRepository {
         isVideo: Boolean,
     ): Flow<DownloadProgress>
 
+    /** Saves the stream at [url] to the file [path] (full name), without asking YouTube for a URL. */
+    fun downloadStreamToFile(
+        url: String,
+        path: String,
+    ): Flow<DownloadProgress>
+
     fun getRelatedData(videoId: String): Flow<Resource<Pair<List<Track>, String?>>>
 
     fun getRadioFromEndpoint(endpoint: YouTubeWatchEndpoint): Flow<Resource<Pair<List<Track>, String?>>>

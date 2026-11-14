@@ -18,6 +18,7 @@ import com.maxrave.domain.mediaservice.player.MediaPlayerListener
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.logger.Logger
 import com.simpmusic.media_jvm.audio.ReverbIrFiles
+import com.simpmusic.media_jvm.cache.ListenCache
 import com.simpmusic.media_jvm.download.getDownloadPath
 import com.simpmusic.media_jvm.memory.MemoryTrimmer
 import kotlinx.coroutines.CancellationException
@@ -46,6 +47,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Collections
 import java.util.IdentityHashMap
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
 
@@ -72,6 +74,7 @@ class MpvPlayerAdapter(
     private val dataStoreManager: DataStoreManager,
     private val streamRepository: StreamRepository,
     private val downloadHandler: DownloadHandler,
+    private val listenCache: ListenCache,
 ) : MediaPlayerInterface {
     // Internal state enum for proper state machine
     private enum class InternalState {
@@ -262,6 +265,20 @@ class MpvPlayerAdapter(
 
     // Tracks whose downloaded file was already dropped this session (see healCorruptDownload).
     private val healedVideoIds = mutableSetOf<String>()
+
+    /**
+     * Which track and source each handle was opened with, whichever path opened it (a load, a
+     * precache, a crossfade): the listening cache saves from that URL, and a failing handle on a
+     * cached file is how a broken cache file is recognised. Weak, so released handles fall out.
+     */
+    private val playerOrigins: MutableMap<MpvPlayer, Pair<String, PlayableSource>> =
+        Collections.synchronizedMap(WeakHashMap())
+
+    // Listening time of the current handle, for the listening cache (see trackListening).
+    private var listenedPlayer: MpvPlayer? = null
+    private var listenedMs = 0L
+    private var listenTickNs = 0L
+    private var listenOffered = false
 
     /** The track whose load started last and when, for the `resolve <id> sound` timing line. */
     @Volatile
@@ -1325,6 +1342,7 @@ class MpvPlayerAdapter(
      */
     private suspend fun waveformSourceUrl(videoId: String): String? {
         downloadedFile(videoId)?.let { return it.absolutePath }
+        listenCache.cachedFile(videoId)?.let { return it.absolutePath }
         val audioUrl = streamRepository.getNewFormat(videoId).lastOrNull()?.audioUrl?.takeIf { it.isNotEmpty() } ?: return null
         return audioUrl.takeIf { streamRepository.is403Url(it).firstOrNull() == false }
     }
@@ -1563,7 +1581,7 @@ class MpvPlayerAdapter(
                                 return@launch
                             }
                             resolvedSource = source
-                            createMediaPlayerInternal(source)
+                            createMediaPlayerInternal(source, videoId)
                         }
 
                     if (player == null) {
@@ -1649,7 +1667,13 @@ class MpvPlayerAdapter(
      * [MpvVideoFrameSource], the successor of `VlcVideoSurfacePanel`. Audio sources get a
      * headless handle with `vid=no`/`vo=null`, so no video stream is ever decoded or fetched.
      */
-    private fun createMediaPlayerInternal(source: PlayableSource): MpvPlayer? {
+    private fun createMediaPlayerInternal(
+        source: PlayableSource,
+        videoId: String,
+    ): MpvPlayer? =
+        createMediaPlayerHandle(source)?.also { playerOrigins[it] = videoId to source }
+
+    private fun createMediaPlayerHandle(source: PlayableSource): MpvPlayer? {
         // VLC used --network-caching=10000 globally and :network-caching=15000 for video.
         val cacheSeconds = if (source.isVideo) 15 else 10
         return if (source.isVideo) {
@@ -1716,6 +1740,17 @@ class MpvPlayerAdapter(
                             if (retryVideoId != currentVideoId) {
                                 retryVideoId = currentVideoId
                                 retryCount = 0
+                            }
+                            // A cached copy is only a copy: dropped on its first failure, and the
+                            // reload streams the track instead.
+                            if (healCorruptCache(player, currentVideoId, "mpv failed on the cached file")) {
+                                try {
+                                    reloadCurrentTrack(currentVideoId)
+                                    return@launch
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    Logger.e(TAG, "Reload after dropping the cached file failed: ${e.message}", e)
+                                }
                             }
                             // The reload below reads the same file again: from the second failure on a
                             // downloaded track is broken on disk, not unlucky.
@@ -1959,6 +1994,8 @@ class MpvPlayerAdapter(
         }
         earlyEndRetries++
         Logger.w(TAG, "Stream for $videoId ended at ${positionMs}ms of ${cachedDuration}ms, resuming (attempt $earlyEndRetries/$maxRetryCount)")
+        // A cached file that ends early is cut short: the reload streams the track instead.
+        currentPlayer?.let { healCorruptCache(it, videoId, "the cached file ended at ${positionMs}ms of ${cachedDuration}ms") }
         reloadCurrentTrack(videoId)
         return true
     }
@@ -2070,7 +2107,7 @@ class MpvPlayerAdapter(
                                 Logger.e(TAG, "Failed to extract URL for crossfade")
                                 null
                             } else {
-                                createMediaPlayerInternal(nextSource)?.also { newPlayer ->
+                                createMediaPlayerInternal(nextSource, nextVideoId)?.also { newPlayer ->
                                     newPlayer.loadFile(buildPlaybackUrl(nextSource), startPaused = true)
                                 }
                             }
@@ -2379,6 +2416,9 @@ class MpvPlayerAdapter(
         /** Floor for the shortest track worth crossfading, in ms. */
         private const val MIN_CROSSFADE_TRACK_MS = 20_000L
 
+        /** Played time after which a track heard from the network is saved to the listening cache. */
+        private const val CACHE_AFTER_LISTENED_MS = 30_000L
+
         /** An end of file further than this from the track's length means the stream died, not that it finished. */
         private const val EARLY_END_MARGIN_MS = 5_000L
     }
@@ -2426,6 +2466,7 @@ class MpvPlayerAdapter(
                                     val dur = player.length
                                     if (pos > 0) cachedPosition = pos
                                     if (dur > 0) cachedDuration = dur
+                                    if (internalState == InternalState.PLAYING) trackListening(player)
                                 }
                             }
 
@@ -2529,7 +2570,7 @@ class MpvPlayerAdapter(
                                 // mpv has no separate "parse without playing" call like vlcj's
                                 // media().prepare(); loading held at pause=yes is the equivalent,
                                 // and additionally warms the demuxer cache.
-                                val player = createMediaPlayerInternal(source)
+                                val player = createMediaPlayerInternal(source, mediaItem.mediaId)
                                 if (player == null) {
                                     Logger.w(TAG, "Precaching skipped for $idx: could not create mpv player")
                                 } else {
@@ -2768,7 +2809,52 @@ class MpvPlayerAdapter(
     private fun downloadedFile(videoId: String): File? =
         File(getDownloadPath(), "$videoId.webm").takeIf { it.isFile && it.length() > 0 }
 
-    override fun isLocallyPlayable(mediaId: String): Boolean = downloadedFile(mediaId) != null
+    override fun isLocallyPlayable(mediaId: String): Boolean = downloadedFile(mediaId) != null || listenCache.cachedFile(mediaId) != null
+
+    /**
+     * Counts the time [player] has actually played (paused time and seeks do not count) and, past
+     * [CACHE_AFTER_LISTENED_MS], hands its stream to the listening cache once. A track skipped
+     * sooner is never saved. Called from the position loop while playing, every ~50 ms.
+     */
+    private fun trackListening(player: MpvPlayer) {
+        val now = System.nanoTime()
+        if (listenedPlayer !== player) {
+            listenedPlayer = player
+            listenedMs = 0L
+            listenOffered = false
+            listenTickNs = now
+            return
+        }
+        // A gap longer than a second is a pause or a stall, not listening.
+        listenedMs += ((now - listenTickNs) / 1_000_000).coerceIn(0L, 1_000L)
+        listenTickNs = now
+        if (listenOffered || listenedMs < CACHE_AFTER_LISTENED_MS) return
+        listenOffered = true
+        val (videoId, source) = playerOrigins[player] ?: return
+        if (source.isLive || LiveStreamRegistry.isLive(videoId)) return
+        // The audio stream itself: a video source carries it as its slave. A local path is a file
+        // that is already a download or a cached copy.
+        val audioUrl = (if (source.isVideo) source.audioSlaveUrl else source.url) ?: return
+        if (!audioUrl.startsWith("http")) return
+        listenCache.offer(videoId, audioUrl)
+    }
+
+    /**
+     * Drops the cached copy of [videoId] when [player] was playing exactly that file. Returns true if
+     * it did, and the caller then reloads the track, which now streams.
+     */
+    private fun healCorruptCache(
+        player: MpvPlayer,
+        videoId: String,
+        reason: String,
+    ): Boolean {
+        val (originId, source) = playerOrigins[player] ?: return false
+        val cached = listenCache.cachedFile(videoId) ?: return false
+        if (originId != videoId || source.url != cached.absolutePath) return false
+        if (!listenCache.drop(videoId)) return false
+        Logger.i("Offline", "heal $videoId cache dropped ($reason)")
+        return true
+    }
 
     /**
      * mpv failed twice on a track it plays from the downloads folder: the file is broken (a download
@@ -2808,6 +2894,10 @@ class MpvPlayerAdapter(
         // A live broadcast is one HLS playlist carrying audio and video together: there is nothing
         // to merge, and nothing about it is in the format table (see StreamRepositoryImpl).
         if (LiveStreamRegistry.isLive(videoId)) return liveStreamSource(videoId, asVideo = shouldFindVideo)
+
+        // Then the listening cache, which holds audio only: a track meant to play as video goes to the
+        // network first and falls back to the cached audio (see below).
+        if (!shouldFindVideo) cachedSource(videoId)?.let { return it }
 
         // Try new format API (returns both audio and video URLs)
         streamRepository.getNewFormat(videoId).lastOrNull()?.let { format ->
@@ -2910,9 +3000,19 @@ class MpvPlayerAdapter(
             }
         }
 
+        if (shouldFindVideo) cachedSource(videoId)?.let { return it }
+
         Logger.i("Offline", "source $videoId none")
         return null
     }
+
+    /** The cached copy of [videoId], marked as just played. */
+    private fun cachedSource(videoId: String): PlayableSource? =
+        listenCache.cachedFile(videoId)?.let { file ->
+            listenCache.touch(file)
+            Logger.i("Offline", "source $videoId cache")
+            PlayableSource(isVideo = false, url = file.absolutePath)
+        }
 
     /** A live broadcast's HLS playlist, resolved afresh on every play — it expires within hours. */
     private suspend fun liveStreamSource(

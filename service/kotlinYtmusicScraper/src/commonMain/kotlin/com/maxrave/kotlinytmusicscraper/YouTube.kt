@@ -2359,6 +2359,31 @@ class YouTube {
                 }
         }.flowOn(Dispatchers.IO)
 
+    /**
+     * Saves the stream at [url] to [filePath] as it is, with no player request: for a URL the caller
+     * already has, such as the one a track is playing from. A refused or expired URL is a failure.
+     */
+    fun downloadUrl(
+        url: String,
+        filePath: String,
+    ): Flow<DownloadProgress> =
+        channelFlow {
+            runCatching {
+                ytMusic.download(url, filePath).collect { progress ->
+                    if (!progress.first) {
+                        trySend(DownloadProgress(audioDownloadProgress = progress.second))
+                    } else if (progress.isFailedDownload()) {
+                        throw Exception("Download failed")
+                    } else {
+                        trySend(DownloadProgress(audioDownloadProgress = 1f, isDone = true))
+                    }
+                }
+            }.onFailure { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                trySend(DownloadProgress.failed(e.message ?: "Download failed"))
+            }
+        }.flowOn(Dispatchers.IO)
+
     private fun Triple<Boolean, Float, Int>.isFailedDownload(): Boolean = first && second < 1f
 
     suspend fun is403Url(url: String) = ytMusic.is403Url(url)

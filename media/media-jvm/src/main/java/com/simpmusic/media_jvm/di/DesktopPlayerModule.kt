@@ -5,10 +5,14 @@ import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.notification.DesktopNotificationManager
 import com.maxrave.domain.repository.CacheRepository
+import com.maxrave.common.Config
+import com.simpmusic.media_jvm.cache.ListenCache
 import com.simpmusic.media_jvm.download.DownloadUtils
 import com.simpmusic.media_jvm.mpv.MpvPlayerAdapter
 import com.simpmusic.media_jvm.notification.NucleusDesktopNotificationManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.Executors
@@ -35,6 +39,14 @@ private val desktopPlayerModule =
                 dataStoreManager = get(),
                 streamRepository = get(),
                 downloadHandler = get(),
+                listenCache = get(),
+            )
+        }
+
+        single<ListenCache> {
+            ListenCache(
+                songRepository = get(),
+                dataStoreManager = get(),
             )
         }
 
@@ -43,18 +55,26 @@ private val desktopPlayerModule =
             get<MpvPlayerAdapter>()
         }
 
+        // The player cache is the listening cache in ~/.simpmusic/cache; downloads are not a cache
+        // here (they are files the download screens manage), so DOWNLOAD_CACHE stays empty.
         single<CacheRepository> {
+            val listenCache = get<ListenCache>()
             object : CacheRepository {
-                override suspend fun getCacheSize(cacheName: String): Long = 0L
+                override suspend fun getCacheSize(cacheName: String): Long =
+                    if (cacheName == Config.PLAYER_CACHE) withContext(Dispatchers.IO) { listenCache.size() } else 0L
 
-                override fun clearCache(cacheName: String) {}
+                override fun clearCache(cacheName: String) {
+                    if (cacheName == Config.PLAYER_CACHE) listenCache.clear()
+                }
 
-                override suspend fun getAllCacheKeys(cacheName: String): List<String> = emptyList()
+                override suspend fun getAllCacheKeys(cacheName: String): List<String> =
+                    if (cacheName == Config.PLAYER_CACHE) withContext(Dispatchers.IO) { listenCache.videoIds() } else emptyList()
 
-                // mpv streams straight from the network; Desktop keeps no song cache on disk.
-                override suspend fun getFullyCachedSongIds(): List<String> = emptyList()
+                override suspend fun getFullyCachedSongIds(): List<String> = withContext(Dispatchers.IO) { listenCache.videoIds() }
 
-                override suspend fun removeCachedSong(videoId: String) {}
+                override suspend fun removeCachedSong(videoId: String) {
+                    withContext(Dispatchers.IO) { listenCache.drop(videoId) }
+                }
             }
         }
         single<DesktopNotificationManager> {
