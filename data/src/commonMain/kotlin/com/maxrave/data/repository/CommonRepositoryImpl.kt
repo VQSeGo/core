@@ -53,6 +53,8 @@ internal class CommonRepositoryImpl(
         // guest Home and nothing refreshed it once the cookie arrived.
         runBlocking {
             dataStoreManager.cookie.first().takeIf { it.isNotEmpty() }?.let { youTube.cookie = it }
+            // Home loads once at start now; it must not go out in the device locale before localeJob runs.
+            youTube.locale = youTubeLocale(dataStoreManager.location.first(), dataStoreManager.language.first())
             youTube.pageId = dataStoreManager.pageId.first().ifEmpty { null }
             youTube.authUser = dataStoreManager.authUser.first()
             // Before the first stream is resolved: see BravePipeFirst for what a cold window costs.
@@ -84,15 +86,7 @@ internal class CommonRepositoryImpl(
                     combine(dataStoreManager.location, dataStoreManager.language) { location, language ->
                         Pair(location, language)
                     }.collectLatest { (location, language) ->
-                        youTube.locale =
-                            YouTubeLocale(
-                                location,
-                                try {
-                                    language.substring(0..1)
-                                } catch (e: Exception) {
-                                    "en"
-                                },
-                            )
+                        youTube.locale = youTubeLocale(location, language)
                     }
                 }
             val ytCookieJob =
@@ -265,6 +259,18 @@ internal class CommonRepositoryImpl(
                 packageName,
             )
         }
+
+    private fun youTubeLocale(
+        location: String,
+        language: String,
+    ) = YouTubeLocale(
+        location,
+        try {
+            language.substring(0..1)
+        } catch (e: Exception) {
+            "en"
+        },
+    )
 }
 
 private data class ProxyData(
