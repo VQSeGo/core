@@ -81,10 +81,7 @@ dependencies {
     // and media3-session ship androidx.media at runtime scope only
     implementation(libs.androidx.media)
 
-    // Google Cast (gated: real SDK for full builds, no-op stub for FOSS builds)
-    if (isFullBuild) {
-        implementation(projects.cast)
-    } else {
-        implementation(projects.castEmpty)
-    }
+    // Google Cast is not used: always the no-op stub, so MediaRouter and the Cast
+    // framework never start up (they cost ~0.1 s of the main thread at launch).
+    implementation(projects.castEmpty)
 }
