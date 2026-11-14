@@ -18,6 +18,7 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.HomeRepository
 import com.maxrave.domain.utils.Resource
 import com.maxrave.kotlinytmusicscraper.YouTube
+import com.maxrave.kotlinytmusicscraper.models.response.BrowseResponse
 import com.maxrave.logger.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -65,151 +66,114 @@ internal class HomeRepositoryImpl(
         params: String?,
         viewString: String,
         songString: String,
+        useCache: Boolean,
     ): Flow<Resource<Triple<String?, List<HomeItem>, String?>>> =
         flow {
-            runCatching {
-                val limit = dataStoreManager.homeLimit.first()
-                youTube
-                    .customQuery(browseId = "FEmusic_home", params = params)
-                    .onSuccess { result ->
-                        val list: ArrayList<HomeItem> = arrayListOf()
-                        if (result.contents
-                                ?.singleColumnBrowseResultsRenderer
-                                ?.tabs
-                                ?.get(
-                                    0,
-                                )?.tabRenderer
-                                ?.content
-                                ?.sectionListRenderer
-                                ?.contents
-                                ?.get(
-                                    0,
-                                )?.musicCarouselShelfRenderer
-                                ?.header
-                                ?.musicCarouselShelfBasicHeaderRenderer
-                                ?.strapline
-                                ?.runs
-                                ?.get(
-                                    0,
-                                )?.text != null
-                        ) {
-                            val accountName =
-                                result.contents
-                                    ?.singleColumnBrowseResultsRenderer
-                                    ?.tabs
-                                    ?.get(
-                                        0,
-                                    )?.tabRenderer
-                                    ?.content
-                                    ?.sectionListRenderer
-                                    ?.contents
-                                    ?.get(
-                                        0,
-                                    )?.musicCarouselShelfRenderer
-                                    ?.header
-                                    ?.musicCarouselShelfBasicHeaderRenderer
-                                    ?.strapline
-                                    ?.runs
-                                    ?.get(
-                                        0,
-                                    )?.text ?: ""
-                            val accountThumbUrl =
-                                result.contents
-                                    ?.singleColumnBrowseResultsRenderer
-                                    ?.tabs
-                                    ?.get(
-                                        0,
-                                    )?.tabRenderer
-                                    ?.content
-                                    ?.sectionListRenderer
-                                    ?.contents
-                                    ?.get(
-                                        0,
-                                    )?.musicCarouselShelfRenderer
-                                    ?.header
-                                    ?.musicCarouselShelfBasicHeaderRenderer
-                                    ?.thumbnail
-                                    ?.musicThumbnailRenderer
-                                    ?.thumbnail
-                                    ?.thumbnails
-                                    ?.get(
-                                        0,
-                                    )?.url
-                                    ?.replace("s88", "s352") ?: ""
-                            if (accountName != "" && accountThumbUrl != "") {
-                                dataStoreManager.putString("AccountName", accountName)
-                                dataStoreManager.putString("AccountThumbUrl", accountThumbUrl)
-                            }
-                        }
-                        val continueParam =
-                            result.contents
-                                ?.singleColumnBrowseResultsRenderer
-                                ?.tabs
-                                ?.get(
-                                    0,
-                                )?.tabRenderer
-                                ?.content
-                                ?.sectionListRenderer
-                                ?.continuations
-                                ?.get(
-                                    0,
-                                )?.nextContinuationData
-                                ?.continuation
-                        val data =
-                            result.contents
-                                ?.singleColumnBrowseResultsRenderer
-                                ?.tabs
-                                ?.get(
-                                    0,
-                                )?.tabRenderer
-                                ?.content
-                                ?.sectionListRenderer
-                                ?.contents
-                        list.addAll(
-                            parseMixedContent(
-                                data,
-                                viewString,
-                                songString,
-                            ),
-                        )
-//                        var count = 0
-//                        while (count < limit && continueParam != null) {
-//                            youTube
-//                                .customQuery(browseId = "", continuation = continueParam)
-//                                .onSuccess { response ->
-//                                    continueParam =
-//                                        response.continuationContents
-//                                            ?.sectionListContinuation
-//                                            ?.continuations
-//                                            ?.get(
-//                                                0,
-//                                            )?.nextContinuationData
-//                                            ?.continuation
-//                                    Logger.d("Repository", "continueParam: $continueParam")
-//                                    val dataContinue =
-//                                        response.continuationContents?.sectionListContinuation?.contents
-//                                    list.addAll(
-//                                        parseMixedContent(
-//                                            dataContinue,
-//                                            viewString,
-//                                            songString,
-//                                        ),
-//                                    )
-//                                    count++
-//                                    Logger.d("Repository", "count: $count")
-//                                }.onFailure {
-//                                    Logger.e("Repository", "Error: ${it.message}")
-//                                    count++
-//                                }
-//                        }
-                        Logger.d("Repository", "List size: ${list.size}")
-                        val background = result.background?.musicThumbnailRenderer?.getThumbnailUrl()
-                        emit(Resource.Success(Triple(continueParam, list.toList(), background)))
-                    }.onFailure { error ->
-                        emit(Resource.Error<Triple<String?, List<HomeItem>, String?>>(error.message.toString()))
-                    }
+            // Only the default feed is cached: a mood chip is picked by hand and can wait for the network.
+            // The key is computed on a refresh too, so the fresh feed is still saved.
+            val cacheKey =
+                if (params == null) {
+                    HomeFeedCache.key(
+                        language = dataStoreManager.language.first(),
+                        location = dataStoreManager.location.first(),
+                        cookie = dataStoreManager.cookie.first(),
+                        pageId = dataStoreManager.pageId.first(),
+                        authUser = dataStoreManager.authUser.first(),
+                    )
+                } else {
+                    null
+                }
+            // Last launch's feed first, so Home paints without waiting for (or having) a network.
+            // Its continuation token is dropped: it goes stale, and paging waits for the fresh feed.
+            val cached =
+                cacheKey
+                    ?.takeIf { useCache }
+                    ?.let { HomeFeedCache.read(it) }
+                    ?.let { response -> runCatching { parseHomeResponse(response, viewString, songString) }.getOrNull() }
+                    ?.takeIf { it.second.isNotEmpty() }
+                    ?.copy(first = null)
+            if (cached != null) {
+                emit(Resource.Success(cached))
             }
+            val result = youTube.customQuery(browseId = "FEmusic_home", params = params)
+            // mapCatching only around the plain parser: a parse that throws becomes an error, not silence.
+            result
+                .mapCatching { response -> parseHomeResponse(response, viewString, songString) }
+                .onSuccess { home ->
+                    saveAccountFromHome(result.getOrThrow())
+                    Logger.d("Repository", "List size: ${home.second.size}")
+                    emit(Resource.Success(home))
+                    if (cacheKey != null && home.second.isNotEmpty()) {
+                        HomeFeedCache.write(cacheKey, result.getOrThrow())
+                    }
+                }.onFailure { error ->
+                    // The cached feed rides along as data: a caller that already shows it keeps it, and one
+                    // that only takes the last value (Android Auto) still gets a feed.
+                    if (cached != null) {
+                        Logger.i("Offline", "home network failed, cached feed stays: ${error::class.simpleName}")
+                    }
+                    emit(Resource.Error(error.message.toString(), cached))
+                }
         }.flowOn(Dispatchers.IO)
+
+    /**
+     * The one parser for the Home browse response, shared by the network and the cache paths:
+     * continuation token, shelves and page background. Anything that filters shelves belongs here.
+     */
+    private fun parseHomeResponse(
+        result: BrowseResponse,
+        viewString: String,
+        songString: String,
+    ): Triple<String?, List<HomeItem>, String?> {
+        val sectionList =
+            result.contents
+                ?.singleColumnBrowseResultsRenderer
+                ?.tabs
+                ?.firstOrNull()
+                ?.tabRenderer
+                ?.content
+                ?.sectionListRenderer
+        val continueParam =
+            sectionList
+                ?.continuations
+                ?.firstOrNull()
+                ?.nextContinuationData
+                ?.continuation
+        val list = parseMixedContent(sectionList?.contents, viewString, songString)
+        val background = result.background?.musicThumbnailRenderer?.getThumbnailUrl()
+        return Triple(continueParam, list, background)
+    }
+
+    /** The signed-in account's name and avatar ride on the first shelf's header; network responses only. */
+    private suspend fun saveAccountFromHome(result: BrowseResponse) {
+        val header =
+            result.contents
+                ?.singleColumnBrowseResultsRenderer
+                ?.tabs
+                ?.firstOrNull()
+                ?.tabRenderer
+                ?.content
+                ?.sectionListRenderer
+                ?.contents
+                ?.firstOrNull()
+                ?.musicCarouselShelfRenderer
+                ?.header
+                ?.musicCarouselShelfBasicHeaderRenderer
+                ?: return
+        val accountName = header.strapline?.runs?.firstOrNull()?.text ?: return
+        val accountThumbUrl =
+            header.thumbnail
+                ?.musicThumbnailRenderer
+                ?.thumbnail
+                ?.thumbnails
+                ?.firstOrNull()
+                ?.url
+                ?.replace("s88", "s352") ?: ""
+        if (accountName != "" && accountThumbUrl != "") {
+            dataStoreManager.putString("AccountName", accountName)
+            dataStoreManager.putString("AccountThumbUrl", accountThumbUrl)
+        }
+    }
 
     override fun getHomeDataContinue(
         continueParam: String,

@@ -12,12 +12,17 @@ import kotlinx.coroutines.flow.Flow
 interface HomeRepository {
     /**
      * @return Triple of continueParams, HomeItem List and the URL of the page background image
-     * YouTube sends with Home (null when it sends none)
+     * YouTube sends with Home (null when it sends none).
+     *
+     * With [useCache] and no [params], the feed saved by the last successful load is emitted first (without a
+     * continuation token), then the fresh one. If the network then fails, the Error carries that cached feed as
+     * its data. Without a cached copy it behaves as a plain request.
      */
     fun getHomeData(
         params: String? = null,
         viewString: String,
         songString: String,
+        useCache: Boolean = true,
     ): Flow<Resource<Triple<String?, List<HomeItem>, String?>>>
 
     fun getHomeDataContinue(

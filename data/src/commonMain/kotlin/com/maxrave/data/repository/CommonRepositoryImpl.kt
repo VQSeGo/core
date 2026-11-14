@@ -99,6 +99,8 @@ internal class CommonRepositoryImpl(
                             }
                         } else {
                             youTube.cookie = null
+                            // Signed out (every sign-out path clears the cookie): the last feed was that account's.
+                            HomeFeedCache.delete()
                         }
                         Logger.d("YouTube", "New cookie")
                         localDataSource.getUsedGoogleAccount()?.netscapeCookie?.let {
