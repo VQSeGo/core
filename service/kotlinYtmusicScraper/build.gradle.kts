@@ -71,7 +71,6 @@ kotlin {
                 implementation(libs.ktor.serialization.kotlinx.json)
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.kotlin.reflect)
-                implementation(libs.ktor.client.logging)
                 implementation(libs.ktor.serialization.kotlinx.json)
                 implementation(libs.ktor.serialization.kotlinx.xml)
                 implementation(libs.ktor.serialization.kotlinx.protobuf)

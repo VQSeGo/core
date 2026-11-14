@@ -56,7 +56,6 @@ kotlin {
                 implementation(libs.ktor.serialization.kotlinx.json)
                 implementation(libs.ktor.client.content.negotiation)
                 implementation(libs.ktor.serialization.kotlinx.protobuf)
-                implementation(libs.ktor.client.logging)
 
                 implementation(libs.kotlin.reflect)
                 implementation(libs.kotlin.test)
