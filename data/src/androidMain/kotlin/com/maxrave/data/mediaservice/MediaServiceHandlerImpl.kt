@@ -565,6 +565,43 @@ internal class MediaServiceHandlerImpl(
             )
         }
         _format.value = null
+        // Both subscriptions are swapped here, before the job below writes the song table: the
+        // previous track's subscription used to stay alive until the end of that job, so every one
+        // of its writes made it emit its own row (and its liked flag) over the track that had just
+        // started, and a skip during the writes kept it alive into the next track as well.
+        getFormatJob?.cancel()
+        songEntityJob?.cancel()
+        songEntityJob =
+            coroutineScope.launch {
+                songRepository.getSongAsFlow(videoId).cancellable().filterNotNull().collectLatest { songEntity ->
+                    // A subscription that outlived its track must not touch the new one.
+                    if (nowPlayingState.value.mediaItem.mediaId != mediaItem.mediaId) {
+                        Logger.i(TAG, "Dropped the song row of $videoId from a previous track")
+                        return@collectLatest
+                    }
+                    if (dataStoreManager.explicitContentEnabled.first() == FALSE && songEntity.isExplicit) {
+                        showToast(ToastType.ExplicitContent)
+                        if (player.hasNextMediaItem()) {
+                            player.seekToNext()
+                        } else if (player.hasPreviousMediaItem()) {
+                            player.seekToPrevious()
+                        } else {
+                            player.stop()
+                        }
+                        return@collectLatest
+                    }
+                    _nowPlayingState.update {
+                        it.copy(
+                            songEntity = songEntity,
+                        )
+                    }
+                    _controlState.update {
+                        it.copy(
+                            isLiked = songEntity.liked,
+                        )
+                    }
+                }
+            }
         getDataOfNowPlayingTrackStateJob?.cancel()
         getDataOfNowPlayingTrackStateJob =
             coroutineScope.launch {
@@ -634,33 +671,6 @@ internal class MediaServiceHandlerImpl(
                         updateDiscordRpc(songEntity)
                     }
                 }
-                songEntityJob?.cancel()
-                songEntityJob =
-                    coroutineScope.launch {
-                        songRepository.getSongAsFlow(videoId).cancellable().filterNotNull().collectLatest { songEntity ->
-                            if (dataStoreManager.explicitContentEnabled.first() == FALSE && songEntity.isExplicit) {
-                                showToast(ToastType.ExplicitContent)
-                                if (player.hasNextMediaItem()) {
-                                    player.seekToNext()
-                                } else if (player.hasPreviousMediaItem()) {
-                                    player.seekToPrevious()
-                                } else {
-                                    player.stop()
-                                }
-                                return@collectLatest
-                            }
-                            _nowPlayingState.update {
-                                it.copy(
-                                    songEntity = songEntity,
-                                )
-                            }
-                            _controlState.update {
-                                it.copy(
-                                    isLiked = songEntity.liked,
-                                )
-                            }
-                        }
-                    }
                 if (dataStoreManager.sendBackToGoogle.first() == TRUE) {
                     getFormat(videoId)
                 }
@@ -674,6 +684,13 @@ internal class MediaServiceHandlerImpl(
                 if (mediaId != null) {
                     streamRepository.getFormatFlow(mediaId).cancellable().collectLatest { f ->
                         Logger.d(TAG, "Get format for $mediaId: itag ${f?.itag}, expires ${f?.expiredTime}")
+                        // The format table is written when the next track's stream is fetched, which
+                        // makes this flow re-emit; a previous track's format must not reach playback
+                        // tracking under the new one.
+                        if (nowPlayingState.value.mediaItem.mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO) != mediaId) {
+                            Logger.i(TAG, "Dropped the format of $mediaId from a previous track")
+                            return@collectLatest
+                        }
                         if (f != null) {
                             _format.emit(f)
                         } else {
