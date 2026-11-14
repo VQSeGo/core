@@ -57,9 +57,12 @@ private val refusalCheckClient: OkHttpClient by lazy {
 }
 
 /**
- * HEAD one random audio or video URL the way `Ytmusic.is403Url` did for BravePipe's answers: only
- * a 4xx, or no answer within 3 s, counts as refused. A 5xx passes, unlike [headCheckRandomStream]
- * (seen 2026-11-13: googlevideo answered 503 to a HEAD during a quick run of skips).
+ * HEAD one random audio or video URL of BravePipe's answer: only a 4xx counts as refused. A 5xx
+ * passes, unlike [headCheckRandomStream] (seen 2026-11-13: googlevideo answered 503 to a HEAD during
+ * a quick run of skips), and so does no answer within 3 s: the extraction itself has just gone
+ * through, so a slow HEAD says the network is busy, not that the URL is bad. Counting it as refused
+ * turned a good answer into `No URL found` (seen 2026-11-14 on the phone, five resolves at once after
+ * a launch), and in the first tier it sent the track through the PipePipe tiers for 10-20 s.
  */
 internal fun List<Pair<Int, String>>.refusedByHead(): Boolean {
     val required = ITAG.AUDIO + ITAG.VIDEO
@@ -76,8 +79,8 @@ internal fun List<Pair<Int, String>>.refusedByHead(): Boolean {
             response.code in 400..499
         }
     }.onFailure {
-        Logger.i("Offline", "head itag=${candidate.first} failed: ${it::class.simpleName} ${it.message}")
-    }.getOrDefault(true)
+        Logger.i("Offline", "head itag=${candidate.first} failed: ${it::class.simpleName} ${it.message}, not counted as refused")
+    }.getOrDefault(false)
 }
 
 class BraveNewPipeDownloaderImpl(
