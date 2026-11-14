@@ -124,7 +124,7 @@ object Logger {
         e: Throwable? = null,
     ) {
         if (isMuted(tag)) return
-        logger.e(throwable = e, tag = tag, message = { LogRedaction.redact(message) })
+        logger.e(throwable = e?.let { LogRedaction.redactThrowable(it) }, tag = tag, message = { LogRedaction.redact(message) })
     }
 
     /** [value] as text cut to [max] characters, for logging objects that can run to kilobytes. */
