@@ -19,18 +19,78 @@ import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.kotlinytmusicscraper.models.MediaType
 import com.maxrave.kotlinytmusicscraper.models.response.PlayerResponse
 import com.maxrave.logger.Logger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
+/** How long a resolved player response is handed to the next request for the same track. */
+private const val RECENT_PLAYER_MS = 2 * 60 * 1000L
+
+private typealias PlayerResult = Result<Triple<String?, PlayerResponse, MediaType>>
+
+@OptIn(ExperimentalTime::class)
 internal class StreamRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
 ) : StreamRepository {
+    /**
+     * Resolutions run here, not in the caller: one that outlives its caller (the player's 15 s limit
+     * on Android, a precached track dropped by a skip) still finishes, and its answer serves the next
+     * request. Seen 2026-11-14 on the phone: the resolver gave up on an answer that came 2 s later,
+     * and the retry started the whole resolution again.
+     */
+    private val resolveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val resolveLock = Mutex()
+    private val inFlight = HashMap<String, Deferred<PlayerResult>>()
+    private val recent = HashMap<String, Pair<Long, PlayerResult>>()
+
+    /**
+     * One [YouTube.player] per track at a time: the player, the precache, the download and a retry
+     * asking for the same track wait for the first request instead of starting their own. A finished
+     * answer is reused for [RECENT_PLAYER_MS] unless [invalidateFormat] drops it.
+     */
+    private suspend fun sharedPlayer(
+        videoId: String,
+        noLogIn: Boolean,
+        preferredAudioLanguage: String?,
+    ): PlayerResult {
+        val key = "$videoId|$noLogIn|$preferredAudioLanguage"
+        val deferred =
+            resolveLock.withLock {
+                val now = Clock.System.now().toEpochMilliseconds()
+                recent.entries.removeAll { now - it.value.first > RECENT_PLAYER_MS }
+                recent[key]?.let { (at, result) ->
+                    Logger.i("Offline", "resolve $videoId reused ${now - at}")
+                    return result
+                }
+                inFlight[key]?.also { Logger.i("Offline", "resolve $videoId joined") }
+                    ?: resolveScope
+                        .async {
+                            val result = youTube.player(videoId, noLogIn = noLogIn, preferredAudioLanguage = preferredAudioLanguage)
+                            // Waits for the lock the launching call still holds, so the entry below is
+                            // always in place before it is removed here.
+                            resolveLock.withLock {
+                                inFlight.remove(key)
+                                if (result.isSuccess) recent[key] = Clock.System.now().toEpochMilliseconds() to result
+                            }
+                            result
+                        }.also { inFlight[key] = it }
+            }
+        return deferred.await()
+    }
+
     override suspend fun insertNewFormat(newFormat: NewFormatEntity) =
         withContext(Dispatchers.IO) {
             localDataSource.insertNewFormat(newFormat)
@@ -110,13 +170,11 @@ internal class StreamRepositoryImpl(
                 } else {
                     ITAG.MUXED_360P
                 }
-            youTube
-                .player(
-                    videoId,
-                    noLogIn = muxed,
-                    preferredAudioLanguage = dataStoreManager.preferredAudioLanguage.first(),
-                )
-                .onSuccess { data ->
+            sharedPlayer(
+                videoId,
+                noLogIn = muxed,
+                preferredAudioLanguage = dataStoreManager.preferredAudioLanguage.first(),
+            ).onSuccess { data ->
                     val response = data.second
                     val isLive = response.videoDetails?.isLive == true
                     LiveStreamRegistry.recordLiveStatus(videoId, isLive)
@@ -353,6 +411,8 @@ internal class StreamRepositoryImpl(
     override fun is403Url(url: String) = flow { emit(youTube.is403Url(url)) }.flowOn(Dispatchers.IO)
 
     override suspend fun invalidateFormat(videoId: String) {
+        // A URL the player was refused must not come back from the shared answer either.
+        resolveLock.withLock { recent.keys.removeAll { it.startsWith("$videoId|") } }
         withContext(Dispatchers.IO) {
             localDataSource.getNewFormat(videoId)?.let { format ->
                 Logger.d("Stream", "Invalidating cached format for $videoId")
