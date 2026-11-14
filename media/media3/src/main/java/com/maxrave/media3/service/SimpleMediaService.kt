@@ -16,6 +16,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
+import androidx.media3.session.guardMediaButtonsWithoutPackage
 import com.google.common.util.concurrent.MoreExecutors
 import com.maxrave.common.MEDIA_NOTIFICATION
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
@@ -93,7 +94,11 @@ internal class SimpleMediaService :
                     this,
                     player,
                     simpleMediaSessionCallback,
-                )
+                ).also { session ->
+                    // A media button with no package name (cmd media_session dispatch) crashes Media3.
+                    runCatching { session.guardMediaButtonsWithoutPackage() }
+                        .onFailure { Logger.e("Service", "Media button guard not installed: $it") }
+                }
         }
 
         simpleMediaServiceHandler.onUpdateNotification = { list ->
