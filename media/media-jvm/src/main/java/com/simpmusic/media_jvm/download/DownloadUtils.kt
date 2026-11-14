@@ -29,9 +29,6 @@ import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "DownloadUtils"
@@ -54,7 +51,7 @@ private const val RETRY_DELAY_MS = 2_000L
 
 // A transfer writes here and nowhere else. The player takes any `<videoId>.webm` in the downloads
 // folder for a finished track, so a file may only appear there whole, by a rename out of this folder.
-private const val PARTIAL_DIR = ".partial"
+private const val PARTIAL_DIR = PartialFileStore.PARTIAL_DIR
 
 internal class DownloadUtils(
     private val dataStoreManager: DataStoreManager,
@@ -131,30 +128,13 @@ internal class DownloadUtils(
         interrupted.forEach { enqueue(it.videoId, it.title) }
     }
 
-    private fun partialDir() = File(getDownloadPath(), PARTIAL_DIR)
+    private val store = PartialFileStore(File(getDownloadPath()))
 
-    /** Everything a transfer of [videoId] may have left in [PARTIAL_DIR]: the file, the video half and the chunks folder. */
-    private fun deletePartial(videoId: String) {
-        listOf("$videoId.webm", "$videoId.mp4", "temp_chunks_$videoId.webm").forEach { File(partialDir(), it).deleteRecursively() }
-    }
+    private fun partialDir() = store.partialDir
 
-    /** Whole file or nothing: a rename inside one folder, which no reader can see half done. */
-    private fun publish(videoId: String): Boolean {
-        val source = File(partialDir(), "$videoId.webm")
-        if (!source.isFile || source.length() == 0L) return false
-        val target = audioFile(videoId)
-        return try {
-            try {
-                Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            } catch (e: AtomicMoveNotSupportedException) {
-                Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
-            true
-        } catch (e: java.io.IOException) {
-            Logger.e(TAG, "Could not move the finished download of $videoId into place: ${e.message}")
-            false
-        }
-    }
+    private fun deletePartial(videoId: String) = store.deletePartial(videoId)
+
+    private fun publish(videoId: String): Boolean = store.publish(videoId)
 
     override suspend fun downloadTrack(
         videoId: String,
@@ -219,7 +199,7 @@ internal class DownloadUtils(
                 songRepository
                     .downloadToFile(
                         song.toTrack(),
-                        path = partialDir().path + File.separator + song.videoId,
+                        path = store.partialBase(song.videoId),
                         videoId = song.videoId,
                         isVideo = false,
                     ).collect { state ->
@@ -239,7 +219,7 @@ internal class DownloadUtils(
         return false
     }
 
-    private fun audioFile(videoId: String) = File(getDownloadPath(), "$videoId.webm")
+    private fun audioFile(videoId: String) = store.file(videoId)
 
     // ===== Desktop download notifications =====
     //
@@ -262,7 +242,7 @@ internal class DownloadUtils(
     // Last of the properties: these coroutines start at once and touch the ones above.
     init {
         // Nothing is running yet, so whatever lies in here was left by a transfer the last run died in.
-        partialDir().deleteRecursively()
+        store.dropAllPartials()
         File(getDownloadPath()).listFiles { file -> file.isDirectory && file.name.startsWith("temp_chunks_") }?.forEach { it.deleteRecursively() }
         repeat(PARALLEL_DOWNLOADS) {
             coroutineScope.launch {
