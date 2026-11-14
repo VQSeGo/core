@@ -2228,6 +2228,9 @@ class YouTube {
      */
     fun getExtractSource(videoId: String): String? = ExtractSource.of(videoId)
 
+    /** See [com.maxrave.kotlinytmusicscraper.extractor.Extractor.warmUp]. Blocking. */
+    fun warmUpExtractor() = ytMusic.warmUpExtractor()
+
     private fun getNParam(listFormat: List<PlayerResponse.StreamingData.Format>): String? =
         listFormat
             .firstOrNull { it.itag == ITAG.AUDIO_OPUS_MEDIUM }

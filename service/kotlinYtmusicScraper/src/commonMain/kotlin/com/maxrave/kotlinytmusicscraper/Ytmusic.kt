@@ -287,6 +287,8 @@ class Ytmusic {
 
     fun getLiveHlsUrl(videoId: String): String? = extractor.liveHlsUrl(videoId)
 
+    fun warmUpExtractor() = extractor.warmUp()
+
     fun mergeAudioVideoDownload(filePath: String): DownloadProgress = extractor.mergeAudioVideoDownload(filePath)
 
     fun saveAudioWithThumbnail(

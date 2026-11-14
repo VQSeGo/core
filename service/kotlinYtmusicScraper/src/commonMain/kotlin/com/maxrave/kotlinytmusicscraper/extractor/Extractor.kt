@@ -18,6 +18,12 @@ expect class Extractor() {
     fun newPipePlayer(videoId: String): List<Pair<Int, String>>
 
     /**
+     * Fetches and prepares BravePipe's copy of the YouTube player code ahead of the first track.
+     * Blocking; call it off the main thread. Does nothing once the code is cached.
+     */
+    fun warmUp()
+
+    /**
      * The HLS playlist of a video that is broadcasting live right now, or null when no extractor
      * produced one.
      *

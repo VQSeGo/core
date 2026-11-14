@@ -14,32 +14,62 @@ import okio.IOException
 import okio.Path.Companion.toPath
 import org.schabi.newpipe.extractor.NewPipe as BraveNewPipe
 import org.schabi.newpipe.extractor.ServiceList as BraveServiceList
+import org.schabi.newpipe.extractor.services.youtube.YoutubeJavaScriptPlayerManager as BravePlayerCode
 import org.schabi.newpipe.extractor.stream.StreamInfo as BraveStreamInfo
 
 private const val TAG = "Extractor"
 private const val LOCAL_TIER = "local"
 private const val REMOTE_TIER = "pipepipe.dev"
 
-/**
- * How long BravePipe goes first after both PipePipe tiers failed and it answered. Measured
- * 2026-11-13: every PipePipe URL came back 403 at the HEAD check, which spent 4-17 s per track
- * before BravePipe (1.4-3.7 s) was asked at all. Half an hour, so PipePipe gets probed again.
- */
-private const val BRAVE_FIRST_MS = 30 * 60 * 1000L
+/** Any public video: BravePipe needs one to find the current player code. */
+private const val WARM_UP_VIDEO_ID = "dQw4w9WgXcQ"
 
 actual class Extractor {
     private var newPipeDownloader = NewPipeDownloaderImpl(proxy = null)
     private var braveNewPipeDownloader = BraveNewPipeDownloaderImpl(proxy = null)
     private val faradayDecoder = FaradayJsDecoder()
 
-    /** Until when BravePipe is asked before the PipePipe tiers; see [BRAVE_FIRST_MS]. */
-    @Volatile
-    private var braveFirstUntil = 0L
-
     actual fun init() {
         NewPipe.init(newPipeDownloader)
         BraveNewPipe.init(braveNewPipeDownloader)
         YoutubeApiDecoder.setLocalDecoder(faradayDecoder)
+    }
+
+    /**
+     * BravePipe keeps what it learns on its first extraction (the player code, the client version and
+     * the like) in static fields with no lock, so tracks resolved together while it is cold each fetch
+     * and parse all of it again. Seen 2026-11-14 on the phone: three resolutions right after a launch
+     * spent 9-20 s in BravePipe and finished within a second of each other, against 1.5-2 s each once
+     * it was warm. Until one extraction went through, one caller at a time.
+     */
+    private val braveColdLock = Any()
+
+    @Volatile
+    private var braveWarm = false
+
+    actual fun warmUp() {
+        if (braveWarm) return
+        synchronized(braveColdLock) {
+            if (braveWarm) return
+            val started = System.nanoTime()
+            val code = runCatching { BravePlayerCode.getSignatureTimestamp(WARM_UP_VIDEO_ID) }.isSuccess
+            val codeDone = System.nanoTime()
+            // A whole extraction, not just the player code: the code alone left a later extraction
+            // still cold for 14 s.
+            val ok =
+                runCatching {
+                    BraveStreamInfo.getInfo(BraveServiceList.YouTube, "https://www.youtube.com/watch?v=$WARM_UP_VIDEO_ID")
+                }.onFailure { Logger.w(TAG, "BravePipe warm-up failed: ${it.message}") }.isSuccess
+            // Once, whatever came of it: a failed warm-up (no network at launch, this one video
+            // refused) must not make every later extraction pay for another one.
+            braveWarm = true
+            val done = System.nanoTime()
+            Logger.i(
+                "Offline",
+                "resolve warm-up brave ${(done - started) / 1_000_000} ok=$ok " +
+                    "(player code ${(codeDone - started) / 1_000_000} ok=$code, extraction ${(done - codeDone) / 1_000_000})",
+            )
+        }
     }
 
     actual fun logIn(cookie: String?) {
@@ -56,7 +86,7 @@ actual class Extractor {
 
         // Tier 0 — BravePipe up front while the PipePipe tiers are known to fail. Its URL is
         // HEAD-checked here, since a rejection must still reach the PipePipe tiers below.
-        val braveFirst = System.currentTimeMillis() < braveFirstUntil
+        val braveFirst = BravePipeFirst.active
         if (braveFirst) {
             val early = timedStage(videoId, "brave-first") { braveStreams(videoId) }
             if (early.isNotEmpty() && !early.refusedByHead()) return early
@@ -71,7 +101,10 @@ actual class Extractor {
         // throws, and the getter is package-private so its state cannot be read from here. Setting
         // it again turns "disabled forever" into "skipped for one track".
         YoutubeApiDecoder.setLocalDecoder(faradayDecoder)
-        timedStage(videoId, "pipepipe-local") { pipePipeStreams(videoId, LOCAL_TIER) }?.let { return it }
+        timedStage(videoId, "pipepipe-local") { pipePipeStreams(videoId, LOCAL_TIER) }?.let {
+            BravePipeFirst.pipePipeAnswered()
+            return it
+        }
 
         // Tier 2 — same extractor with no local decoder at all, so every challenge is solved at
         // api.pipepipe.dev. This is the tier a 403 from tier 1 must reach.
@@ -82,14 +115,17 @@ actual class Extractor {
         // PipePipe's own `disableLocalDecoder` does exactly this but is private, which is why it
         // cannot simply be called from here.
         YoutubeApiDecoder.setLocalDecoder(null)
-        timedStage(videoId, "pipepipe-remote") { pipePipeStreams(videoId, REMOTE_TIER) }?.let { return it }
+        timedStage(videoId, "pipepipe-remote") { pipePipeStreams(videoId, REMOTE_TIER) }?.let {
+            BravePipeFirst.pipePipeAnswered()
+            return it
+        }
 
         // Tier 3 — a different extractor entirely.
         // Checked here like every other tier, so YouTube.newPipePlayer does not HEAD it again.
         val last = timedStage(videoId, "brave") { braveStreams(videoId) }
         if (last.isEmpty() || last.refusedByHead()) return emptyList()
         // Only when BravePipe was not just refused up front.
-        if (!braveFirst) braveFirstUntil = System.currentTimeMillis() + BRAVE_FIRST_MS
+        if (!braveFirst) BravePipeFirst.pipePipeFailed()
         return last
     }
 
@@ -185,6 +221,7 @@ actual class Extractor {
 
     private fun braveStreams(videoId: String): List<Pair<Int, String>> =
         runCatching {
+            warmUp()
             val streamInfo =
                 BraveStreamInfo.getInfo(BraveServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
             val streamsList = streamInfo.audioStreams + streamInfo.videoStreams + streamInfo.videoOnlyStreams

@@ -10,6 +10,7 @@ import com.maxrave.domain.data.type.RecentlyType
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.CommonRepository
 import com.maxrave.kotlinytmusicscraper.YouTube
+import com.maxrave.kotlinytmusicscraper.extractor.BravePipeFirst
 import com.maxrave.kotlinytmusicscraper.models.YouTubeLocale
 import com.maxrave.logger.Logger
 import com.maxrave.spotify.Spotify
@@ -54,6 +55,21 @@ internal class CommonRepositoryImpl(
             dataStoreManager.cookie.first().takeIf { it.isNotEmpty() }?.let { youTube.cookie = it }
             youTube.pageId = dataStoreManager.pageId.first().ifEmpty { null }
             youTube.authUser = dataStoreManager.authUser.first()
+            // Before the first stream is resolved: see BravePipeFirst for what a cold window costs.
+            val braveFirst = dataStoreManager.getString(BRAVE_PIPE_FIRST_KEY).first() == DataStoreManager.TRUE
+            BravePipeFirst.restore(braveFirst)
+            Logger.i("Offline", "resolve brave-first restored=$braveFirst")
+            // The first track arrives a few seconds after the launch; BravePipe's player code is
+            // ready by then instead of being fetched by every track resolved at once.
+            if (braveFirst) coroutineScope.launch(Dispatchers.IO) { youTube.warmUpExtractor() }
+        }
+        BravePipeFirst.onOutcome = { braveFirst ->
+            coroutineScope.launch {
+                dataStoreManager.putString(
+                    BRAVE_PIPE_FIRST_KEY,
+                    if (braveFirst) DataStoreManager.TRUE else DataStoreManager.FALSE,
+                )
+            }
         }
         coroutineScope.launch {
             val resetSpotifyToken =
@@ -265,6 +281,9 @@ expect fun clearProxyAuthenticator()
 
 /** Newest artwork per Your library card; the card draws as many of these as its fan has slots. */
 private const val LIBRARY_ARTWORK = 3
+
+/** The last extractor probe's outcome, so BravePipe goes first right after a launch too. */
+private const val BRAVE_PIPE_FIRST_KEY = "brave_pipe_first"
 
 expect fun getCookies(
     url: String,
