@@ -310,8 +310,8 @@ interface DatabaseDao {
      *
      * Every other path inserts one song at a time through
      * [com.maxrave.data.db.datasource.LocalDataSource.insertSong], which is right when a track
-     * arrives on its own but costs a commit each time. An import writes thousands in a row, so the
-     * batch collapses them into a handful of commits instead.
+     * arrives on its own but costs a commit each time. A bulk write of thousands in a row is better served by the
+     * batch, which collapses them into a handful of commits instead.
      *
      * The per-row semantics are deliberately identical to that single-song path: the insert is
      * IGNORE, and a row that was dropped because it already exists (rowId -1) gets the same two
@@ -651,36 +651,6 @@ interface DatabaseDao {
      */
     @Insert(onConflict = OnConflictStrategy.Companion.IGNORE)
     suspend fun insertLocalPlaylist(localPlaylist: LocalPlaylistEntity): Long
-
-    /**
-     * Creates a playlist and its `pair_song_local_playlist` rows in one transaction.
-     *
-     * [videoIds] must already be filtered down to ids that have a `song` row — the pair table has a
-     * foreign key to `song.videoId` and the insert fails otherwise. Position is the index in
-     * [videoIds], so the caller is responsible for handing over a contiguous list.
-     *
-     * @return the new playlist id, or -1 when the playlist row was not written.
-     */
-    @Transaction
-    suspend fun insertLocalPlaylistWithTracks(
-        localPlaylist: LocalPlaylistEntity,
-        videoIds: List<String>,
-    ): Long {
-        val playlistId = insertLocalPlaylist(localPlaylist)
-        if (playlistId == -1L) return -1L
-        val addedAt = now()
-        videoIds.forEachIndexed { index, videoId ->
-            insertPairSongLocalPlaylist(
-                PairSongLocalPlaylist(
-                    playlistId = playlistId,
-                    songId = videoId,
-                    position = index,
-                    inPlaylist = addedAt,
-                ),
-            )
-        }
-        return playlistId
-    }
 
     @Query("DELETE FROM local_playlist WHERE id = :id")
     suspend fun deleteLocalPlaylist(id: Long)
