@@ -101,9 +101,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import io.github.selemba1000.JMTC
+import io.github.selemba1000.JMTCButtonCallback
+import io.github.selemba1000.JMTCCallbacks
+import io.github.selemba1000.JMTCSettings
 import org.koin.mp.KoinPlatform.getKoin
 import org.simpmusic.nowplayingcenter.NPYC
-import org.simpmusic.nowplayingcenter.domain.NowPlayingListener
 import org.simpmusic.nowplayingcenter.domain.Platform
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -494,33 +497,7 @@ class JvmMediaPlayerHandlerImpl(
         }
         player.volume = runBlocking { dataStoreManager.playerVolume.first() }
         mayBeRestoreQueue()
-        nypc?.setListener(
-            object : NowPlayingListener {
-                override fun onPlayPause() {
-                    coroutineScope.launch {
-                        onPlayerEvent(PlayerEvent.PlayPause)
-                    }
-                }
-
-                override fun onNext() {
-                    coroutineScope.launch {
-                        onPlayerEvent(PlayerEvent.Next)
-                    }
-                }
-
-                override fun onPrevious() {
-                    coroutineScope.launch {
-                        onPlayerEvent(PlayerEvent.Previous)
-                    }
-                }
-
-                override fun onStop() {
-                    coroutineScope.launch {
-                        onPlayerEvent(PlayerEvent.Stop)
-                    }
-                }
-            },
-        )
+        installSystemMediaCallbacks()
         // Initialize macOS media integration
         initializeMacOSMediaIntegration()
         coroutineScope.launch {
@@ -1031,6 +1008,51 @@ class JvmMediaPlayerHandlerImpl(
         // onIsLoadingChanged(false), it was the value the UI actually settled on.
     }
 
+    private fun playFromControls() {
+        player.play()
+        startProgressUpdate()
+    }
+
+    private fun pauseFromControls() {
+        stopProgressUpdate()
+        player.pause()
+    }
+
+    /**
+     * Wires MPRIS (Linux) and SMTC (Windows) buttons straight to JMTC.
+     *
+     * NPYC hands JMTC one callback for both Play and Pause and reports either as
+     * `onPlayPause`, so MPRIS `Play` on a playing track paused it. JMTC itself tells the three
+     * methods apart (its `PlayPause` picks Play or Pause from the published status), so the
+     * callbacks are replaced here: `Play` only starts, `Pause` only pauses, as the MPRIS spec
+     * asks. JMTC is a singleton that NPYC's constructor has already created, so `getInstance`
+     * returns that instance and ignores the settings.
+     */
+    private fun installSystemMediaCallbacks() {
+        if (nypc == null) return
+        runCatching {
+            JMTC.getInstance(JMTCSettings("SimpMusic", "")).setCallbacks(
+                JMTCCallbacks().apply {
+                    onPlay =
+                        JMTCButtonCallback {
+                            coroutineScope.launch {
+                                if (!player.isPlaying) playFromControls()
+                            }
+                        }
+                    onPause =
+                        JMTCButtonCallback {
+                            coroutineScope.launch {
+                                if (player.isPlaying || player.playWhenReady) pauseFromControls()
+                            }
+                        }
+                    onNext = JMTCButtonCallback { coroutineScope.launch { onPlayerEvent(PlayerEvent.Next) } }
+                    onPrevious = JMTCButtonCallback { coroutineScope.launch { onPlayerEvent(PlayerEvent.Previous) } }
+                    onStop = JMTCButtonCallback { coroutineScope.launch { onPlayerEvent(PlayerEvent.Stop) } }
+                },
+            )
+        }.onFailure { Logger.e(TAG, "installSystemMediaCallbacks: ${it.message}") }
+    }
+
     override suspend fun onPlayerEvent(playerEvent: PlayerEvent) {
         when (playerEvent) {
             is PlayerEvent.UpdateVolume -> {
@@ -1055,13 +1077,7 @@ class JvmMediaPlayerHandlerImpl(
             }
 
             PlayerEvent.PlayPause -> {
-                if (player.isPlaying) {
-                    stopProgressUpdate()
-                    player.pause()
-                } else {
-                    player.play()
-                    startProgressUpdate()
-                }
+                if (player.isPlaying) pauseFromControls() else playFromControls()
             }
 
             PlayerEvent.Next -> {
@@ -2578,6 +2594,7 @@ class JvmMediaPlayerHandlerImpl(
     override fun release() {
         Logger.w("ServiceHandler", "Starting release process")
         nypc?.removeListener()
+        if (nypc != null) runCatching { JMTC.getInstance(JMTCSettings("SimpMusic", "")).setCallbacks(JMTCCallbacks()) }
         // Release macOS media integration
         clearMacOSNowPlayingInfo()
         macOSMediaIntegration?.release()
@@ -3063,14 +3080,14 @@ class JvmMediaPlayerHandlerImpl(
                         override fun onPlay() {
                             Logger.d(TAG, "macOS Remote: Play")
                             coroutineScope.launch {
-                                onPlayerEvent(PlayerEvent.PlayPause)
+                                if (!player.isPlaying) playFromControls()
                             }
                         }
 
                         override fun onPause() {
                             Logger.d(TAG, "macOS Remote: Pause")
                             coroutineScope.launch {
-                                onPlayerEvent(PlayerEvent.PlayPause)
+                                if (player.isPlaying || player.playWhenReady) pauseFromControls()
                             }
                         }
 

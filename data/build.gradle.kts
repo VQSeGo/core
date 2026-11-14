@@ -125,6 +125,8 @@ kotlin {
             dependencies {
                 implementation(projects.mediaJvm)
                 implementation(libs.nowplaying)
+                // JMTC directly: NPYC folds MPRIS Play and Pause into one toggle callback.
+                implementation(libs.jmtc)
                 implementation(libs.jna)
                 implementation(libs.jna.platform)
                 // Login sync: the Desktop receives sign-ins from the phone
