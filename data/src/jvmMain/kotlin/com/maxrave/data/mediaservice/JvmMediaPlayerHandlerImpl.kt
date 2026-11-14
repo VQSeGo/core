@@ -643,7 +643,9 @@ class JvmMediaPlayerHandlerImpl(
         }
         _format.value = null
         // Cancelled here, not further down: the writes below touch the song table, which makes the
-        // previous track's subscription emit its own row over the track that just started.
+        // previous track's subscription emit its own row over the track that just started. The
+        // format subscription likewise re-emits when the new track's stream is written.
+        getFormatJob?.cancel()
         songEntityJob?.cancel()
         getDataOfNowPlayingTrackStateJob?.cancel()
         getDataOfNowPlayingTrackStateJob =
@@ -765,6 +767,11 @@ class JvmMediaPlayerHandlerImpl(
                 if (mediaId != null) {
                     streamRepository.getFormatFlow(mediaId).cancellable().collectLatest { f ->
                         Logger.d(TAG, "Get format for $mediaId: itag ${f?.itag}, expires ${f?.expiredTime}")
+                        // A previous track's format must not reach playback tracking under the new one.
+                        if (nowPlayingState.value.mediaItem.mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO) != mediaId) {
+                            Logger.i(TAG, "Dropped the format of $mediaId from a previous track")
+                            return@collectLatest
+                        }
                         if (f != null) {
                             _format.emit(f)
                         } else {
