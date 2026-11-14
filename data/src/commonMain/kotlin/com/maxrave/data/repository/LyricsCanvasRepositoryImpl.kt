@@ -14,6 +14,7 @@ import com.maxrave.domain.utils.Resource
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.logger.Logger
 import com.maxrave.spotify.Spotify
+import com.maxrave.spotify.SpotifyUnauthorizedException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
@@ -99,50 +100,65 @@ internal class LyricsCanvasRepositoryImpl(
                         .replace(".", " ")
                         .replace("  ", " ")
                 Logger.d("Lyrics", "query: $q")
-                var spotifyPersonalToken = ""
-                var spotifyClientToken = ""
-                if (dataStoreManager.spotifyPersonalToken
-                        .first()
-                        .isNotEmpty() &&
-                    dataStoreManager.spotifyPersonalTokenExpires.first() > Clock.System.now().toEpochMilliseconds() &&
-                    dataStoreManager.spotifyPersonalTokenExpires.first() != 0L &&
-                    dataStoreManager.spotifyClientTokenExpires.first() > Clock.System.now().toEpochMilliseconds() &&
-                    dataStoreManager.spotifyClientTokenExpires.first() != 0L
-                ) {
-                    spotifyPersonalToken = dataStoreManager.spotifyPersonalToken.first()
-                    spotifyClientToken = dataStoreManager.spotifyClientToken.first()
-                    Logger.d("Lyrics", "Spotify tokens reused")
-                } else if (dataStoreManager.spdc.first().isNotEmpty()) {
-                    spotify
-                        .getClientToken()
-                        .onSuccess {
-                            Logger.d("Lyrics", "Spotify client token refreshed")
-                            dataStoreManager.setSpotifyClientTokenExpires(
-                                (it.grantedToken.expiresAfterSeconds * 1000L) + Clock.System.now().toEpochMilliseconds(),
-                            )
-                            dataStoreManager.setSpotifyClientToken(it.grantedToken.token)
-                            spotifyClientToken = it.grantedToken.token
-                        }.onFailure {
-                            it.printStackTrace()
-                            emit(Resource.Error<Lyrics>("Not found"))
+                // Both expiry keys hold epoch milliseconds. Older builds also wrote epoch seconds (a reset at
+                // launch), which is about 1000 times smaller than now in milliseconds and so reads as expired.
+                // The margin keeps a token that dies mid-request from being reused.
+                val expiryMarginMs = 60_000L
+                var forceRefresh = false
+                for (attempt in 0..1) {
+                    var spotifyPersonalToken = ""
+                    var spotifyClientToken = ""
+                    var reused = false
+                    val nowMs = Clock.System.now().toEpochMilliseconds()
+                    if (!forceRefresh &&
+                        dataStoreManager.spotifyPersonalToken
+                            .first()
+                            .isNotEmpty() &&
+                        dataStoreManager.spotifyClientToken
+                            .first()
+                            .isNotEmpty() &&
+                        dataStoreManager.spotifyPersonalTokenExpires.first() > nowMs + expiryMarginMs &&
+                        dataStoreManager.spotifyClientTokenExpires.first() > nowMs + expiryMarginMs
+                    ) {
+                        spotifyPersonalToken = dataStoreManager.spotifyPersonalToken.first()
+                        spotifyClientToken = dataStoreManager.spotifyClientToken.first()
+                        reused = true
+                        Logger.i("Spotify", "Spotify tokens reused")
+                    } else if (dataStoreManager.spdc.first().isNotEmpty()) {
+                        spotify
+                            .getClientToken()
+                            .onSuccess {
+                                dataStoreManager.setSpotifyClientTokenExpires(
+                                    (it.grantedToken.expiresAfterSeconds * 1000L) + Clock.System.now().toEpochMilliseconds(),
+                                )
+                                dataStoreManager.setSpotifyClientToken(it.grantedToken.token)
+                                spotifyClientToken = it.grantedToken.token
+                            }.onFailure {
+                                it.printStackTrace()
+                                emit(Resource.Error<Lyrics>("Not found"))
+                            }
+                        spotify
+                            .getPersonalTokenWithTotp(dataStoreManager.spdc.first())
+                            .onSuccess {
+                                spotifyPersonalToken = it.accessToken
+                                dataStoreManager.setSpotifyPersonalToken(spotifyPersonalToken)
+                                dataStoreManager.setSpotifyPersonalTokenExpires(
+                                    it.accessTokenExpirationTimestampMs,
+                                )
+                            }.onFailure {
+                                it.printStackTrace()
+                                emit(Resource.Error<Lyrics>("Not found"))
+                            }
+                        if (spotifyPersonalToken.isNotEmpty() && spotifyClientToken.isNotEmpty()) {
+                            Logger.i("Spotify", "Spotify token refreshed")
                         }
+                    }
+                    if (spotifyPersonalToken.isEmpty() || spotifyClientToken.isEmpty()) break
+                    // A stored token Spotify no longer accepts: clear it and go round once more with fresh ones.
+                    val retryOnUnauthorized = reused && attempt == 0
+                    var unauthorized = false
                     spotify
-                        .getPersonalTokenWithTotp(dataStoreManager.spdc.first())
-                        .onSuccess {
-                            spotifyPersonalToken = it.accessToken
-                            dataStoreManager.setSpotifyPersonalToken(spotifyPersonalToken)
-                            dataStoreManager.setSpotifyPersonalTokenExpires(
-                                it.accessTokenExpirationTimestampMs,
-                            )
-                        }.onFailure {
-                            it.printStackTrace()
-                            emit(Resource.Error<Lyrics>("Not found"))
-                        }
-                }
-                if (spotifyPersonalToken.isNotEmpty() && spotifyClientToken.isNotEmpty()) {
-                    val authToken = spotifyPersonalToken
-                    spotify
-                        .searchSpotifyTrack(q, authToken, spotifyClientToken)
+                        .searchSpotifyTrack(q, spotifyPersonalToken, spotifyClientToken)
                         .onSuccess { searchResponse ->
                             val track =
                                 if (duration != 0 && duration != null) {
@@ -179,16 +195,32 @@ internal class LyricsCanvasRepositoryImpl(
                                     .onSuccess {
                                         emit(Resource.Success<Lyrics>(it.toLyrics()))
                                     }.onFailure {
-                                        it.printStackTrace()
-                                        emit(Resource.Error<Lyrics>("Not found"))
+                                        if (it is SpotifyUnauthorizedException) unauthorized = true
+                                        if (!(unauthorized && retryOnUnauthorized)) {
+                                            it.printStackTrace()
+                                            emit(Resource.Error<Lyrics>("Not found"))
+                                        }
                                     }
                             } else {
                                 emit(Resource.Error<Lyrics>("Not found"))
                             }
                         }.onFailure { throwable ->
-                            throwable.printStackTrace()
-                            emit(Resource.Error<Lyrics>("Not found"))
+                            if (throwable is SpotifyUnauthorizedException) unauthorized = true
+                            if (!(unauthorized && retryOnUnauthorized)) {
+                                throwable.printStackTrace()
+                                emit(Resource.Error<Lyrics>("Not found"))
+                            }
                         }
+                    if (unauthorized && retryOnUnauthorized) {
+                        Logger.i("Spotify", "Spotify stored token rejected (401), refreshing and retrying once")
+                        dataStoreManager.setSpotifyPersonalToken("")
+                        dataStoreManager.setSpotifyClientToken("")
+                        dataStoreManager.setSpotifyPersonalTokenExpires(0L)
+                        dataStoreManager.setSpotifyClientTokenExpires(0L)
+                        forceRefresh = true
+                        continue
+                    }
+                    break
                 }
             }
         }.flowOn(Dispatchers.IO)

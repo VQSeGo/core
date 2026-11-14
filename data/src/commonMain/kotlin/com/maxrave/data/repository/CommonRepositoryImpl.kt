@@ -32,7 +32,6 @@ import okio.IOException
 import okio.Path.Companion.toPath
 import okio.buffer
 import okio.use
-import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 internal class CommonRepositoryImpl(
@@ -82,13 +81,6 @@ internal class CommonRepositoryImpl(
             }
         }
         coroutineScope.launch {
-            val resetSpotifyToken =
-                launch {
-                    dataStoreManager.setSpotifyClientToken("")
-                    dataStoreManager.setSpotifyPersonalToken("")
-                    dataStoreManager.setSpotifyClientTokenExpires(Clock.System.now().epochSeconds)
-                    dataStoreManager.setSpotifyPersonalTokenExpires(Clock.System.now().epochSeconds)
-                }
             val localeJob =
                 launch {
                     combine(dataStoreManager.location, dataStoreManager.language) { location, language ->
@@ -200,7 +192,6 @@ internal class CommonRepositoryImpl(
             usingProxy.join()
             dataSyncIdJob.join()
             visitorDataJob.join()
-            resetSpotifyToken.join()
         }
     }
 

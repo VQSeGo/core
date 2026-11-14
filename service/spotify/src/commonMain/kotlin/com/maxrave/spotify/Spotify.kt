@@ -8,6 +8,7 @@ import com.maxrave.spotify.model.response.spotify.search.SpotifySearchResponse
 import io.ktor.client.call.body
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.engine.http
+import io.ktor.http.HttpStatusCode
 
 class Spotify {
     private val spotifyClient = SpotifyClient()
@@ -69,9 +70,9 @@ class Spotify {
         authToken: String,
         clientToken: String,
     ) = runCatching {
-        spotifyClient
-            .searchSpotifyTrack(query, authToken, clientToken)
-            .body<SpotifySearchResponse>()
+        val response = spotifyClient.searchSpotifyTrack(query, authToken, clientToken)
+        if (response.status == HttpStatusCode.Unauthorized) throw SpotifyUnauthorizedException()
+        response.body<SpotifySearchResponse>()
     }
 
     suspend fun getSpotifyLyrics(
@@ -79,11 +80,16 @@ class Spotify {
         token: String,
         clientToken: String,
     ) = runCatching {
-        spotifyClient
-            .getSpotifyLyrics(
+        val response =
+            spotifyClient.getSpotifyLyrics(
                 token = token,
                 clientToken = clientToken,
                 trackId,
-            ).body<SpotifyLyricsResponse>()
+            )
+        if (response.status == HttpStatusCode.Unauthorized) throw SpotifyUnauthorizedException()
+        response.body<SpotifyLyricsResponse>()
     }
 }
+
+/** Spotify answered 401: the access or client token it was given is no longer accepted. */
+class SpotifyUnauthorizedException : Exception("Spotify rejected the token (401)")
