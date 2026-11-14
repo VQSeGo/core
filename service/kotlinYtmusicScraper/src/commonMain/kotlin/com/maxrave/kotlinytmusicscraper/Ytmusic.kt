@@ -27,6 +27,7 @@ import com.maxrave.kotlinytmusicscraper.models.response.DownloadProgress
 import com.maxrave.kotlinytmusicscraper.utils.parseCookieString
 import com.maxrave.kotlinytmusicscraper.utils.sha1
 import com.maxrave.ktorext.curl.CurlLogger
+import com.maxrave.logger.LogRedaction
 import com.maxrave.ktorext.encoding.brotli
 import com.maxrave.ktorext.getEngine
 import com.maxrave.logger.Logger
@@ -192,6 +193,9 @@ class Ytmusic {
             install(Logging) {
                 logger = io.ktor.client.plugins.logging.Logger.DEFAULT
                 level = LogLevel.ALL
+                // Asked per request: with "Debug logging" off the call is not logged and its body not read.
+                filter { Logger.debugLogging }
+                sanitizeHeader(LogRedaction.MASK) { header -> LogRedaction.SECRET_HEADERS.any { it.equals(header, ignoreCase = true) } }
             }
             install(ContentNegotiation) {
                 protobuf()

@@ -62,6 +62,7 @@ import com.maxrave.domain.repository.SearchRepository
 import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.logger.Logger
+import com.maxrave.logger.LogRedaction
 import com.maxrave.media3.cast.CastHandoffManager
 import com.maxrave.media3.waveform.WaveformReader
 import com.maxrave.media3.cast.CastStreamResolver
@@ -92,6 +93,7 @@ import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import org.koin.android.ext.koin.androidApplication
@@ -614,14 +616,24 @@ private fun provideHttpDataSourceFactory(
                 .readTimeout(30.seconds)
                 .proxy(
                     proxy,
-                ).addInterceptor(
-                    HttpLoggingInterceptor()
-                        .apply {
-                            level = HttpLoggingInterceptor.Level.HEADERS
-                        },
-                ).build(),
+                ).addInterceptor(audioLoggingInterceptor()).build(),
         ),
     )
+
+/**
+ * Request and response headers of every audio request, while "Debug logging" is on (asked per request,
+ * so the setting applies without rebuilding the player). Credential headers are masked either way.
+ */
+private fun audioLoggingInterceptor(): Interceptor {
+    val headers =
+        HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.HEADERS
+            LogRedaction.SECRET_HEADERS.forEach { redactHeader(it) }
+        }
+    return Interceptor { chain ->
+        if (Logger.debugLogging) headers.intercept(chain) else chain.proceed(chain.request())
+    }
+}
 
 @UnstableApi
 private fun provideLoadControl(): LoadControl =

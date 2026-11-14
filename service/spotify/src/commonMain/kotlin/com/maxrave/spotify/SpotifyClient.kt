@@ -1,6 +1,7 @@
 package com.maxrave.spotify
 
 import com.maxrave.ktorext.curl.CurlLogger
+import com.maxrave.logger.LogRedaction
 import com.maxrave.ktorext.encoding.brotli
 import com.maxrave.ktorext.getEngine
 import com.maxrave.spotify.model.body.SpotifyClientBody
@@ -72,7 +73,11 @@ class SpotifyClient {
             install(Logging) {
                 logger = Logger.DEFAULT
                 level = LogLevel.ALL
+                // Asked per request: with "Debug logging" off the call is not logged and its body not read.
+                filter { com.maxrave.logger.Logger.debugLogging }
+                sanitizeHeader(LogRedaction.MASK) { header -> LogRedaction.SECRET_HEADERS.any { it.equals(header, ignoreCase = true) } }
             }
+            // Masks the sp_dc cookie and the bearer and client tokens; off with "Debug logging".
             install(CurlLogger) {
                 logger = { Logger.DEFAULT.log(it) }
             }

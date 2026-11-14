@@ -55,6 +55,8 @@ kotlin {
                 api(libs.ktor.client.core)
                 api(libs.ktor.client.cio)
                 implementation(libs.ktor.client.encoding)
+                // The curl logger's switch (Logger.debugLogging) and secret masking (LogRedaction).
+                implementation(projects.common)
             }
         }
 

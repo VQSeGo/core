@@ -1,5 +1,7 @@
 package com.maxrave.ktorext.curl
 
+import com.maxrave.logger.LogRedaction
+import com.maxrave.logger.Logger
 import io.ktor.client.plugins.api.SendingRequest
 import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.request.HttpRequestBuilder
@@ -23,11 +25,16 @@ class CurlLoggerConfig {
     var logger: (String) -> Unit = { println(it) }
 
     /**
-     * Header names (case-insensitive) whose value is replaced with `<redacted>`.
-     * Empty by default so the printed command stays copy-paste runnable.
-     * Set e.g. `setOf("Authorization", "Cookie")` to avoid leaking secrets to logs.
+     * Header names (case-insensitive) whose value is replaced with `***`. The account's cookie and
+     * tokens by default, in every build: a pasted command needs them put back by hand.
      */
-    var redactHeaders: Set<String> = emptySet()
+    var redactHeaders: Set<String> = LogRedaction.SECRET_HEADERS
+
+    /**
+     * Asked on every request; false skips building the command at all. The "Debug logging" setting by
+     * default, so turning it off takes effect without recreating the client.
+     */
+    var enabled: () -> Boolean = { Logger.debugLogging }
 
     /**
      * When true, drops the `Accept-Encoding` request header and appends `--compressed`
@@ -56,8 +63,10 @@ val CurlLogger = createClientPlugin("CurlLogger", ::CurlLoggerConfig) {
     val log = pluginConfig.logger
     val redactHeaders = pluginConfig.redactHeaders.mapTo(mutableSetOf()) { it.lowercase() }
     val handleCompression = pluginConfig.handleCompression
+    val enabled = pluginConfig.enabled
 
     on(SendingRequest) { request, content ->
+        if (!enabled()) return@on
         try {
             log(buildCurlCommand(request, content, redactHeaders, handleCompression))
         } catch (e: CancellationException) {
@@ -89,7 +98,7 @@ private suspend fun buildCurlCommand(
         if (handleCompression && lower == acceptEncodingName) return@forEach
         seenHeaders += lower
         values.forEach { value ->
-            val shown = if (lower in redactHeaders) "<redacted>" else value
+            val shown = if (lower in redactHeaders) LogRedaction.MASK else value
             parts += "-H " + "$name: $shown".shellQuote()
         }
     }

@@ -52,6 +52,8 @@ internal class CommonRepositoryImpl(
         // apply it again a moment later, and Home had already fetched by then: a signed-in user got the
         // guest Home and nothing refreshed it once the cookie arrived.
         runBlocking {
+            // Before the first request: the network loggers ask this flag per request (on unless turned off).
+            Logger.setDebugLogging(dataStoreManager.getString(Logger.DEBUG_LOGGING_KEY).first() != DataStoreManager.FALSE)
             dataStoreManager.cookie.first().takeIf { it.isNotEmpty() }?.let { youTube.cookie = it }
             // Home loads once at start now; it must not go out in the device locale before localeJob runs.
             youTube.locale = youTubeLocale(dataStoreManager.location.first(), dataStoreManager.language.first())
@@ -71,6 +73,12 @@ internal class CommonRepositoryImpl(
                     BRAVE_PIPE_FIRST_KEY,
                     if (braveFirst) DataStoreManager.TRUE else DataStoreManager.FALSE,
                 )
+            }
+        }
+        // The setting applies at once: every logger reads the flag when it writes.
+        coroutineScope.launch {
+            dataStoreManager.getString(Logger.DEBUG_LOGGING_KEY).distinctUntilChanged().collect {
+                Logger.setDebugLogging(it != DataStoreManager.FALSE)
             }
         }
         coroutineScope.launch {

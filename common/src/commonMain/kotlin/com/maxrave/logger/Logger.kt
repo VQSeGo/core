@@ -9,9 +9,32 @@ import co.touchlab.kermit.io.RollingFileLogWriter
 import co.touchlab.kermit.io.RollingFileLogWriterConfig
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
+import kotlin.concurrent.Volatile
 
+// This facade is named like Kermit's own Logger, which this file alone imports: call sites use
+// com.maxrave.logger.Logger and never Kermit directly.
 object Logger {
     private val logger = Logger
+
+    /**
+     * The "Debug logging" setting. Off: Debug lines are dropped before their message is built, Kermit's
+     * floor rises to Info, and the network loggers (curl commands, Ktor Logging, OkHttp headers) check
+     * this flag on every request and stay silent. Info, Warn and Error (the `Startup` and `Offline`
+     * marks, `Auth`) are written either way. Secrets are masked in both modes ([LogRedaction]).
+     *
+     * On until the stored value is read at startup (`CommonRepositoryImpl.init`, inside Koin's start).
+     */
+    /** DataStore key of the setting (`getString`/`putString`); "FALSE" turns it off, anything else is on. */
+    const val DEBUG_LOGGING_KEY = "debug_logging"
+
+    @Volatile
+    var debugLogging: Boolean = true
+        private set
+
+    fun setDebugLogging(enabled: Boolean) {
+        debugLogging = enabled
+        logger.setMinSeverity(if (enabled) Severity.Verbose else Severity.Info)
+    }
 
     // Tags suppressed at all log levels. Add a tag here to silence its logs globally.
     private val mutedTags =
@@ -66,13 +89,17 @@ object Logger {
         tag: String,
         message: String,
     ) {
-        if (isMuted(tag)) return
-        logger.d(
-            tag = tag,
-            message = {
-                message
-            },
-        )
+        if (!debugLogging || isMuted(tag)) return
+        logger.d(tag = tag, message = { LogRedaction.redact(message) })
+    }
+
+    /** Debug line built only when it is written: for dumps of whole responses and objects. */
+    fun d(
+        tag: String,
+        message: () -> String,
+    ) {
+        if (!debugLogging || isMuted(tag)) return
+        logger.d(tag = tag, message = { LogRedaction.redact(message()) })
     }
 
     fun i(
@@ -80,7 +107,7 @@ object Logger {
         message: String,
     ) {
         if (isMuted(tag)) return
-        logger.i(tag = tag, message = { message })
+        logger.i(tag = tag, message = { LogRedaction.redact(message) })
     }
 
     fun w(
@@ -88,7 +115,7 @@ object Logger {
         message: String,
     ) {
         if (isMuted(tag)) return
-        logger.w(tag = tag, message = { message })
+        logger.w(tag = tag, message = { LogRedaction.redact(message) })
     }
 
     fun e(
@@ -97,8 +124,19 @@ object Logger {
         e: Throwable? = null,
     ) {
         if (isMuted(tag)) return
-        logger.e(throwable = e, tag = tag, message = { message })
+        logger.e(throwable = e, tag = tag, message = { LogRedaction.redact(message) })
     }
+
+    /** [value] as text cut to [max] characters, for logging objects that can run to kilobytes. */
+    fun clip(
+        value: Any?,
+        max: Int = CLIP_DEFAULT,
+    ): String {
+        val text = value.toString()
+        return if (text.length <= max) text else text.take(max) + "… (+${text.length - max} chars)"
+    }
+
+    private const val CLIP_DEFAULT = 500
 }
 
 /** A rolling log file that takes [minSeverity] and above only. */
@@ -133,7 +171,11 @@ private object LogLineFormatter : MessageStringFormatter {
         severity: Severity?,
         tag: Tag?,
         message: Message,
-    ): String = "${severity?.name?.first() ?: '-'}/${tag?.tag.orEmpty()}: ${message.message}"
+    ): String = "${severity?.name?.first() ?: '-'}/${tag?.tag.orEmpty()}: ${com.maxrave.logger.Logger.clip(message.message, MAX_FILE_MESSAGE)}"
+
+    // A line in the file stays under 2000 characters with the timestamp and tag in front; Logcat keeps
+    // the whole message (it cuts at ~4 KB itself).
+    private const val MAX_FILE_MESSAGE = 1800
 }
 
 enum class LogLevel {
