@@ -12,6 +12,7 @@ import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.domain.utils.isLive
 import com.maxrave.domain.utils.toTrack
 import com.maxrave.logger.Logger
+import com.simpmusic.media_jvm.cache.ListenCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -58,6 +59,7 @@ internal class DownloadUtils(
     private val streamRepository: StreamRepository,
     private val songRepository: SongRepository,
     private val desktopNotificationManager: DesktopNotificationManager,
+    private val listenCache: ListenCache,
 ) : DownloadHandler {
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -211,7 +213,10 @@ internal class DownloadUtils(
                 error = e.message ?: e.toString()
             }
             if (done && error == null) {
-                if (publish(song.videoId)) return true
+                if (publish(song.videoId)) {
+                    listenCache.dropDownloaded(song.videoId)
+                    return true
+                }
                 error = "the finished file is missing or empty"
             }
             Logger.e(TAG, "Download of ${song.videoId} failed, attempt ${attempt + 1}: $error")

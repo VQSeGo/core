@@ -111,7 +111,8 @@ class ListenCache(
         val ms = (System.nanoTime() - started) / 1_000_000
         if (done && error == null && store.publish(videoId)) {
             Logger.i("Offline", "cache $videoId saved ${store.file(videoId).length()} bytes $ms ms")
-            evict(keep = videoId)
+            // A download of the same track may have finished while this one ran.
+            if (File(getDownloadPath(), "$videoId.webm").isFile) dropDownloaded(videoId) else evict(keep = videoId)
         } else {
             store.deletePartial(videoId)
             Logger.i("Offline", "cache $videoId failed $ms ms: ${error ?: "the finished file is missing or empty"}")
@@ -143,6 +144,14 @@ class ListenCache(
 
     /** Removes the cached file of [videoId]; true if there was one. */
     fun drop(videoId: String): Boolean = store.file(videoId).let { it.isFile && it.delete() }
+
+    /**
+     * Called once [videoId] is in the downloads folder: the player reads downloads first, so the cached
+     * copy would only take space until the size limit pushed it out.
+     */
+    fun dropDownloaded(videoId: String) {
+        if (drop(videoId)) Logger.i("Offline", "cache $videoId dropped (downloaded)")
+    }
 
     /** Bytes the finished files take. */
     fun size(): Long = cachedFiles().sumOf { it.length() }

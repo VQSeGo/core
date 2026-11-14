@@ -88,6 +88,7 @@ private val desktopPlayerModule =
                 streamRepository = get(),
                 songRepository = get(),
                 desktopNotificationManager = get(),
+                listenCache = get(),
             )
         }
     }
