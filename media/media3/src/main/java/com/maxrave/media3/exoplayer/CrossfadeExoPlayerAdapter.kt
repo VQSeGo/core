@@ -23,7 +23,6 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import com.maxrave.domain.data.player.AudioEffects
 import com.maxrave.domain.data.player.AudioOutput
-import com.maxrave.domain.data.player.GenericCastState
 import com.maxrave.domain.data.player.GenericMediaItem
 import com.maxrave.domain.data.player.GenericPlaybackParameters
 import com.maxrave.domain.data.player.LiveStreamRegistry
@@ -462,78 +461,6 @@ internal class CrossfadeExoPlayerAdapter(
             }
     }
 
-    // ========== Cast Remote Routing ==========
-
-    /**
-     * While a Cast session is active this holds the session-level [Player] (the unified
-     * CastPlayer wrapping [forwardingPlayer]): transport calls and position/state getters
-     * are routed to it, and playback-start requests are handed to [castPlaybackRouter]
-     * instead of the local ExoPlayer machinery. The playlist itself stays local — the
-     * receiver only ever sees a small resolved-URL window of it.
-     */
-    @Volatile
-    private var castRemotePlayer: Player? = null
-
-    internal val isCastActive: Boolean
-        get() = castRemotePlayer != null
-
-    /** Set by CastHandoffManager: (playlistIndex, startPositionMs, playWhenReady) -> load on receiver. */
-    internal var castPlaybackRouter: ((Int, Long, Boolean) -> Unit)? = null
-
-    internal fun setCastActive(
-        remotePlayer: Player?,
-        deviceName: String?,
-    ) {
-        if (remotePlayer != null) {
-            if (castRemotePlayer === remotePlayer) return
-            castRemotePlayer = remotePlayer
-            Logger.w(TAG, "Cast session active on ${deviceName ?: "unknown device"} — local playback suspended")
-            coroutineScope.launch {
-                // Kill anything that makes local noise or wastes battery while remote.
-                crossfadeJob?.cancel()
-                crossfadeJob = null
-                secondaryPlayer?.release()
-                secondaryPlayer = null
-                setCrossfading(false)
-                cancelPrecaching()
-                clearAllPrecacheInternal()
-                currentPlayer?.pause()
-                stopPositionUpdates()
-                abandonAudioFocusInternal()
-                notifyEqualizerIntent(false)
-            }
-            listeners.forEach { it.onCastStateChanged(GenericCastState(isRemote = true, deviceName = deviceName)) }
-        } else {
-            if (castRemotePlayer == null) return
-            castRemotePlayer = null
-            Logger.w(TAG, "Cast session ended — back to local playback")
-            listeners.forEach { it.onCastStateChanged(GenericCastState.NOT_CASTING) }
-        }
-    }
-
-    /** Remote queue advanced — keep the local playlist pointer and UI in sync. */
-    internal fun notifyRemoteTransition(playlistIndex: Int) {
-        if (!isCastActive || playlistIndex !in playlist.indices) return
-        if (playlistIndex == localCurrentMediaItemIndex) return
-        localCurrentMediaItemIndex = playlistIndex
-        unpinCurrent()
-        val item = playlist[playlistIndex]
-        listeners.forEach {
-            it.onMediaItemTransition(item, PlayerConstants.MEDIA_ITEM_TRANSITION_REASON_AUTO)
-        }
-    }
-
-    internal fun notifyRemoteIsPlaying(isPlaying: Boolean) {
-        if (!isCastActive) return
-        internalPlayWhenReady = isPlaying
-        listeners.forEach { it.onIsPlayingChanged(isPlaying) }
-    }
-
-    internal fun notifyRemotePlaybackState(playbackState: Int) {
-        if (!isCastActive) return
-        listeners.forEach { it.onPlaybackStateChanged(playbackState) }
-    }
-
     // ========== ExoPlayer Instance Factory ==========
 
     /**
@@ -612,11 +539,6 @@ internal class CrossfadeExoPlayerAdapter(
 
     override fun play() {
         Logger.d(TAG, "play() called (state: $internalState, playWhenReady: $internalPlayWhenReady)")
-        castRemotePlayer?.let { remote ->
-            internalPlayWhenReady = true
-            remote.play()
-            return
-        }
         coroutineScope.launch {
             when (internalState) {
                 InternalState.READY, InternalState.ENDED, InternalState.PAUSED -> {
@@ -662,16 +584,6 @@ internal class CrossfadeExoPlayerAdapter(
 
     override fun pause() {
         Logger.d(TAG, "pause() called (state: $internalState, playWhenReady: $internalPlayWhenReady)")
-        castRemotePlayer?.let { remote ->
-            internalPlayWhenReady = false
-            remote.pause()
-            // The coroutine below never runs on this path, so the sleep attenuation has to be
-            // cleared here too. Left set, it would outlive the cast session: the processor stays in
-            // the local chain and would keep multiplying every sample by ~0, leaving the app silent
-            // with a full volume slider until the process restarts.
-            internalSleepFadeFactor = 1f
-            return
-        }
         coroutineScope.launch {
             try {
                 forwardingPlayer.suppressPlaybackEnded = false
@@ -716,10 +628,6 @@ internal class CrossfadeExoPlayerAdapter(
     }
 
     override fun stop() {
-        castRemotePlayer?.let { remote ->
-            remote.stop()
-            return
-        }
         coroutineScope.launch {
             forwardingPlayer.suppressPlaybackEnded = false
             currentPlayer?.let { player ->
@@ -736,11 +644,6 @@ internal class CrossfadeExoPlayerAdapter(
     override fun seekTo(positionMs: Long) {
         // A live broadcast is followed at its live edge: its seek bar shows LIVE, not a length.
         if (isCurrentTrackLive()) return
-        castRemotePlayer?.let { remote ->
-            remote.seekTo(positionMs)
-            cachedPosition = positionMs
-            return
-        }
         // Reflected immediately so the progress bar does not snap back while the seek is queued.
         cachedPosition = positionMs
         coroutineScope.launch {
@@ -1045,10 +948,7 @@ internal class CrossfadeExoPlayerAdapter(
                     isCrossfading ||
                     // With shuffle on, the tracks before the current one in this unshuffled list are
                     // not the played ones — they are part of what is still to come.
-                    internalShuffleModeEnabled ||
-                    // The receiver's queue window is mapped by absolute playlist positions
-                    // (CastHandoffManager.remoteToPlaylist); shifting them sends it the wrong tracks.
-                    isCastActive
+                    internalShuffleModeEnabled
             if (refused) {
                 onRemoved(emptyList())
                 return@launch
@@ -1200,21 +1100,16 @@ internal class CrossfadeExoPlayerAdapter(
     // ========== Playback State Properties ==========
 
     override val isPlaying: Boolean
-        get() = castRemotePlayer?.isPlaying ?: (internalState == InternalState.PLAYING)
+        get() = internalState == InternalState.PLAYING
 
     override val currentPosition: Long
-        get() = castRemotePlayer?.currentPosition ?: cachedPosition
+        get() = cachedPosition
 
     override val duration: Long
-        get() {
-            castRemotePlayer?.let { remote ->
-                return remote.duration.takeIf { it > 0 } ?: 0L
-            }
-            return currentPlayer?.duration ?: cachedDuration
-        }
+        get() = currentPlayer?.duration ?: cachedDuration
 
     override val bufferedPosition: Long
-        get() = castRemotePlayer?.bufferedPosition ?: cachedBufferedPosition
+        get() = cachedBufferedPosition
 
     override val bufferedPercentage: Int
         get() {
@@ -1233,12 +1128,11 @@ internal class CrossfadeExoPlayerAdapter(
         get() = playlist.size
 
     override val contentPosition: Long
-        get() = castRemotePlayer?.contentPosition ?: cachedPosition
+        get() = cachedPosition
 
     override val playbackState: Int
         get() {
             // Media3 Player.STATE_* values match PlayerConstants 1:1.
-            castRemotePlayer?.let { return it.playbackState }
             return when (internalState) {
                 InternalState.IDLE -> PlayerConstants.STATE_IDLE
                 InternalState.PREPARING -> PlayerConstants.STATE_BUFFERING
@@ -1391,10 +1285,6 @@ internal class CrossfadeExoPlayerAdapter(
             currentPlayer?.playbackParameters = params
             // Also apply to secondary player during crossfade
             secondaryPlayer?.playbackParameters = params
-            // Receiver support varies (speed only, no pitch) — best-effort while casting.
-            castRemotePlayer?.let { remote ->
-                runCatching { remote.playbackParameters = params }
-            }
         }
 
     // ========== Audio Settings ==========
@@ -1407,7 +1297,6 @@ internal class CrossfadeExoPlayerAdapter(
         set(value) {
             Logger.w(TAG, "Setting volume to $value")
             internalVolume = value.coerceIn(0f, 1f)
-            castRemotePlayer?.volume = internalVolume
             currentPlayer?.volume = internalVolume
             listeners.forEach { it.onVolumeChanged(internalVolume) }
         }
@@ -1424,11 +1313,6 @@ internal class CrossfadeExoPlayerAdapter(
             // Nothing to push: each player's SleepFadeAudioProcessor samples this on every buffer.
             // That is the whole point of keeping it off the `volume` line, which the crossfade ramp
             // owns and rewrites fifty times per transition.
-            //
-            // Deliberately not forwarded to castRemotePlayer, unlike `volume` above. While casting
-            // the local pipeline produces no audio, so the processor never sees data and the fade
-            // would have to be rebuilt as a volume ramp on the receiver. Decided against: the sleep
-            // timer simply stops the cast device without fading.
             internalSleepFadeFactor = value.coerceIn(0f, 1f)
         }
 
@@ -1439,10 +1323,6 @@ internal class CrossfadeExoPlayerAdapter(
      * sampled per buffer. A fresh [EqualizerCurve] is allocated on every call precisely so each
      * processor can decide whether to rebuild its coefficients with one reference comparison,
      * rather than diffing eleven floats on every buffer for the whole of playback.
-     *
-     * Not forwarded to `castRemotePlayer`: while casting, the audio is decoded on the receiver and
-     * never passes through this pipeline at all, which is why the settings screen greys the
-     * equalizer out for the duration.
      */
     override fun setEqualizer(
         bandsDb: List<Float>,
@@ -1459,9 +1339,6 @@ internal class CrossfadeExoPlayerAdapter(
      * processor can decide whether to re-derive its taps — or rebuild its partitioned impulse
      * response — with one reference comparison, rather than diffing the whole setting on every
      * buffer for the whole of playback.
-     *
-     * Not forwarded to `castRemotePlayer`, again like the equalizer: while casting, the audio is
-     * decoded on the receiver and never passes through this pipeline at all.
      */
     override fun setAudioEffects(effects: AudioEffects) {
         internalAudioEffects = effects
@@ -1664,15 +1541,6 @@ internal class CrossfadeExoPlayerAdapter(
         val mediaItem = playlist[index]
         val videoId = mediaItem.mediaId
 
-        // While casting, playback starts on the receiver — never on a local ExoPlayer.
-        castPlaybackRouter?.takeIf { isCastActive }?.let { router ->
-            currentLoadJob?.cancel()
-            listeners.forEach {
-                it.onMediaItemTransition(mediaItem, PlayerConstants.MEDIA_ITEM_TRANSITION_REASON_SEEK)
-            }
-            router(index, startPositionMs, shouldPlay)
-            return
-        }
 
         // Cancel previous load
         currentLoadJob?.cancel()
@@ -2140,8 +2008,6 @@ internal class CrossfadeExoPlayerAdapter(
      * Handle track end - mirrors GstreamerPlayerAdapter.handleTrackEndInternal()
      */
     private fun handleTrackEndInternal() {
-        // While casting, track transitions are driven by the receiver queue.
-        if (isCastActive) return
         // Check if crossfade should be used
         val shouldCrossfade =
             crossfadeEnabled &&
@@ -2195,7 +2061,7 @@ internal class CrossfadeExoPlayerAdapter(
      * event is then ignored (no listener to fire).
      */
     private fun triggerCrossfadeTransition(nextIndex: Int) {
-        if (nextIndex !in playlist.indices || isCrossfading || isCastActive) return
+        if (nextIndex !in playlist.indices || isCrossfading) return
 
         // Pinned now, not inside the launch: the target is already chosen, and an append that runs
         // before the fade makes it current must not take its slot.
@@ -2516,7 +2382,7 @@ internal class CrossfadeExoPlayerAdapter(
      * and calls prepare(), which triggers URL resolution and buffering via MediaSourceFactory.
      */
     private fun triggerPrecachingInternal() {
-        if (!precacheEnabled || playlist.isEmpty() || isCastActive) return
+        if (!precacheEnabled || playlist.isEmpty()) return
 
         cancelPrecaching()
         Logger.d(TAG, "Trigger precache")

@@ -26,7 +26,6 @@ import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint
 import com.maxrave.domain.data.player.AppOnScreen
 import com.maxrave.domain.data.player.AudioEffects
 import com.maxrave.domain.data.player.DelayEffect
-import com.maxrave.domain.data.player.GenericCastState
 import com.maxrave.domain.data.player.GenericCommandButton
 import com.maxrave.domain.data.player.GenericMediaItem
 import com.maxrave.domain.data.player.GenericMediaMetadata
@@ -302,9 +301,6 @@ class JvmMediaPlayerHandlerImpl(
 
     private val _currentSongIndex: MutableStateFlow<Int> = MutableStateFlow(player.currentMediaItemIndex)
     override val currentSongIndex: StateFlow<Int> = _currentSongIndex.asStateFlow()
-
-    // Desktop never casts; expose a fixed not-casting state to satisfy the interface.
-    override val castState: StateFlow<GenericCastState> = MutableStateFlow(GenericCastState.NOT_CASTING).asStateFlow()
 
     // List of Specific variables
 

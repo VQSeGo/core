@@ -35,8 +35,7 @@ import kotlin.system.exitProcess
 internal class SimpleMediaService :
     MediaLibraryService(),
     KoinComponent {
-    // Session-level player from DI: the ForwardingPlayer wrapped with Cast support in the
-    // full build (plain ForwardingPlayer in the FOSS build).
+    // Session-level player from DI: the adapter's ForwardingPlayer.
     private val player: Player by inject<Player>(qualifier = named(com.maxrave.common.Config.MAIN_PLAYER))
     private val coilBitmapLoader: CoilBitmapLoader by inject<CoilBitmapLoader>()
 
