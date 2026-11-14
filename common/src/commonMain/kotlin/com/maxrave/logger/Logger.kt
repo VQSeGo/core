@@ -10,6 +10,7 @@ import co.touchlab.kermit.io.RollingFileLogWriterConfig
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlin.concurrent.Volatile
+import kotlin.coroutines.cancellation.CancellationException
 
 // This facade is named like Kermit's own Logger, which this file alone imports: call sites use
 // com.maxrave.logger.Logger and never Kermit directly.
@@ -124,6 +125,11 @@ object Logger {
         e: Throwable? = null,
     ) {
         if (isMuted(tag)) return
+        // A cancelled coroutine is how work ends when the track changes or a screen closes, not a failure.
+        if (e is CancellationException) {
+            d(tag, "$message (cancelled)")
+            return
+        }
         logger.e(throwable = e?.let { LogRedaction.redactThrowable(it) }, tag = tag, message = { LogRedaction.redact(message) })
     }
 
