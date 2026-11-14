@@ -347,6 +347,19 @@ internal class DownloadUtils(
         return true
     }
 
+    /** The file mpv could not play: dropped at once, so the next read streams, and downloaded again. */
+    override fun redownloadCorrupt(key: String): Boolean {
+        val file = audioFile(key)
+        if (!file.isFile) return false
+        file.delete()
+        Logger.i("Offline", "redownload $key queued")
+        coroutineScope.launch {
+            val song = songRepository.getSongById(key).lastOrNull() ?: return@launch
+            enqueue(key, song.title)
+        }
+        return true
+    }
+
     // Downloads here are audio only and play without video.
     override fun downloadVideoPart(
         videoId: String,

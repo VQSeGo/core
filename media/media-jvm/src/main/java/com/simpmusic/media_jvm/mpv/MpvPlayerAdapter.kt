@@ -12,6 +12,7 @@ import com.maxrave.domain.data.player.PlayerConstants
 import com.maxrave.domain.data.player.PlayerError
 import com.maxrave.domain.extension.isVideo
 import com.maxrave.domain.manager.DataStoreManager
+import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.mediaservice.player.MediaPlayerListener
 import com.maxrave.domain.repository.StreamRepository
@@ -70,6 +71,7 @@ class MpvPlayerAdapter(
     private val coroutineScope: CoroutineScope,
     private val dataStoreManager: DataStoreManager,
     private val streamRepository: StreamRepository,
+    private val downloadHandler: DownloadHandler,
 ) : MediaPlayerInterface {
     // Internal state enum for proper state machine
     private enum class InternalState {
@@ -257,6 +259,9 @@ class MpvPlayerAdapter(
     // Retry system - mirrors Android CrossfadeExoPlayerAdapter retry logic
     private var retryCount = 0
     private var retryVideoId: String? = null
+
+    // Tracks whose downloaded file was already dropped this session (see healCorruptDownload).
+    private val healedVideoIds = mutableSetOf<String>()
 
     /** The track whose load started last and when, for the `resolve <id> sound` timing line. */
     @Volatile
@@ -1712,6 +1717,17 @@ class MpvPlayerAdapter(
                                 retryVideoId = currentVideoId
                                 retryCount = 0
                             }
+                            // The reload below reads the same file again: from the second failure on a
+                            // downloaded track is broken on disk, not unlucky.
+                            if (retryCount >= 1 && healCorruptDownload(currentVideoId)) {
+                                try {
+                                    reloadCurrentTrack(currentVideoId)
+                                    return@launch
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    Logger.e(TAG, "Reload after healing failed: ${e.message}", e)
+                                }
+                            }
                             if (retryCount < maxRetryCount) {
                                 retryCount++
                                 Logger.w(TAG, "Retrying playback (attempt $retryCount/$maxRetryCount) for $currentVideoId")
@@ -2753,6 +2769,20 @@ class MpvPlayerAdapter(
         File(getDownloadPath(), "$videoId.webm").takeIf { it.isFile && it.length() > 0 }
 
     override fun isLocallyPlayable(mediaId: String): Boolean = downloadedFile(mediaId) != null
+
+    /**
+     * mpv failed twice on a track it plays from the downloads folder: the file is broken (a download
+     * is written whole or not at all, so it cannot be a half, but what the server sent may have been
+     * garbage). Drops it and queues the download again, so the reload that follows streams the track
+     * and the next play is from a good file. Once per track per session: a file that breaks again, or
+     * an error that was never the file's, ends in the usual retries and the skip.
+     */
+    private fun healCorruptDownload(videoId: String): Boolean {
+        if (videoId in healedVideoIds || downloadedFile(videoId) == null) return false
+        healedVideoIds += videoId
+        Logger.i("Offline", "heal $videoId (mpv failed twice on the downloaded file)")
+        return downloadHandler.redownloadCorrupt(videoId)
+    }
 
     private suspend fun extractPlayableUrl(mediaItem: GenericMediaItem): PlayableSource? {
         val started = System.nanoTime()
