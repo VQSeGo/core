@@ -172,7 +172,7 @@ internal class LyricsCanvasRepositoryImpl(
                                         ?.items
                                         ?.firstOrNull()
                                 }
-                            Logger.d("Lyrics", "track: $track")
+                            Logger.d("Lyrics") { "track: ${Logger.clip(track)}" }
                             if (track != null) {
                                 spotify
                                     .getSpotifyLyrics(track.item?.data?.id ?: "", spotifyPersonalToken, spotifyClientToken)
@@ -299,7 +299,7 @@ internal class LyricsCanvasRepositoryImpl(
             simpMusicLyrics
                 .getLyrics(videoId)
                 .onSuccess { lyrics ->
-                    Logger.d(simpMusicLyricsTag, "Lyrics found: $lyrics")
+                    Logger.d(simpMusicLyricsTag) { "Lyrics found: ${Logger.clip(lyrics)}" }
                     val result = lyrics.firstOrNull()
                     if (result == null) {
                         Logger.w(simpMusicLyricsTag, "No lyrics found for videoId: $videoId")
@@ -331,7 +331,7 @@ internal class LyricsCanvasRepositoryImpl(
             simpMusicLyrics
                 .getTranslatedLyrics(videoId, language)
                 .onSuccess { lyrics ->
-                    Logger.d(simpMusicLyricsTag, "Translated Lyrics found: ${lyrics.toLyrics()}")
+                    Logger.d(simpMusicLyricsTag) { "Translated Lyrics found: ${Logger.clip(lyrics.toLyrics())}" }
                     emit(
                         Resource.Success<Lyrics>(
                             lyrics.toLyrics(),

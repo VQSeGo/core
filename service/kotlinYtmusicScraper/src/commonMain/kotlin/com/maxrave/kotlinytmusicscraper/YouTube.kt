@@ -1343,7 +1343,7 @@ class YouTube {
                         ?.ytConfigData
                         ?.visitorData
             Logger.d(TAG, "Visitor Data $visitorData")
-            Logger.d(TAG, "New Cookie $cookie")
+            Logger.d(TAG, "New Cookie: ${cookie.length} chars")
             Logger.d(TAG, "Playback Tracking $playbackTracking")
             return Triple(cookie, visitorData ?: this@YouTube.visitorData ?: "", playbackTracking)
         } catch (e: Exception) {
@@ -1764,7 +1764,7 @@ class YouTube {
                         WEB_REMIX,
                         continuation,
                     )
-            Logger.d(TAG, "Next Playlists ${res.bodyAsText()}")
+            if (Logger.debugLogging) Logger.d(TAG, "Next Playlists ${Logger.clip(res.bodyAsText())}")
             val response = res.body<BrowseResponse>()
             Pair(
                 response
@@ -1971,7 +1971,7 @@ class YouTube {
             ytMusic
                 .accountMenu(customCookie, WEB_REMIX)
                 .apply {
-                    Logger.d(TAG, this.bodyAsText())
+                    if (Logger.debugLogging) Logger.d(TAG, "accountMenu: ${Logger.clip(bodyAsText())}")
                 }.body<AccountMenuResponse>()
                 .actions[0]
                 .openPopupAction.popup.multiPageMenuRenderer.header

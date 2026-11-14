@@ -144,7 +144,6 @@ data class ArtistPage(
         fun fromMusicTwoRowItemRenderer(renderer: MusicTwoRowItemRenderer): YTItem? {
             return when {
                 renderer.isSong -> {
-                    print("isSong")
                     SongItem(
                         id = renderer.navigationEndpoint.watchEndpoint?.videoId ?: return null,
                         title =
@@ -176,7 +175,6 @@ data class ArtistPage(
                 }
 
                 renderer.isAlbum -> {
-                    print("isAlbum")
                     AlbumItem(
                         browseId =
                             renderer.navigationEndpoint.browseEndpoint?.browseId
@@ -214,7 +212,6 @@ data class ArtistPage(
                 }
 
                 renderer.isPlaylist -> {
-                    print("isPlaylist")
                     // Playlist from YouTube Music
                     PlaylistItem(
                         id =
@@ -268,7 +265,6 @@ data class ArtistPage(
                 }
 
                 renderer.isArtist -> {
-                    print("isArtist")
                     ArtistItem(
                         id = renderer.navigationEndpoint.browseEndpoint?.browseId ?: return null,
                         title =
@@ -305,7 +301,6 @@ data class ArtistPage(
                 }
 
                 renderer.isVideo -> {
-                    print("isVideo")
                     VideoItem(
                         id = renderer.navigationEndpoint.watchEndpoint?.videoId ?: return null,
                         title =

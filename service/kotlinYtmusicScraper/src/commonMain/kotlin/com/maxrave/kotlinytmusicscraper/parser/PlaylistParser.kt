@@ -346,27 +346,25 @@ fun MusicShelfRenderer.Content.toSongItem(): SongItem? {
         artists =
             flexColumns
                 .apply {
-                    Logger.w(
-                        "PlaylistParser",
+                    Logger.d("PlaylistParser") {
                         "Artists: ${this.map {
                             it.musicResponsiveListItemFlexColumnRenderer.text
                                 ?.runs
                                 ?.firstOrNull()
                                 ?.text
-                        }}",
-                    )
+                        }}"
+                    }
                 }.filter {
                     it.musicResponsiveListItemFlexColumnRenderer.isArtist()
                 }.apply {
-                    Logger.w(
-                        "PlaylistParser",
+                    Logger.d("PlaylistParser") {
                         "Artists after filter: ${this.map {
                             it.musicResponsiveListItemFlexColumnRenderer.text
                                 ?.runs
                                 ?.firstOrNull()
                                 ?.text
-                        }}",
-                    )
+                        }}"
+                    }
                 }.mapNotNull { it.musicResponsiveListItemFlexColumnRenderer.toArtist() },
         album =
             flexColumns

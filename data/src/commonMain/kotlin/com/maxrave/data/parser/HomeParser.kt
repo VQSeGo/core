@@ -493,10 +493,7 @@ internal fun parseMixedContent(
                                     listContent.last()?.copy(playEndpoint = musicTwoRowItemRenderer.playEndpoint())
                             }
                         } else if (result1.musicResponsiveListItemRenderer != null) {
-                            Logger.w(
-                                "parse Song flat",
-                                result1.musicResponsiveListItemRenderer.toString(),
-                            )
+                            Logger.d("parse Song flat") { Logger.clip(result1.musicResponsiveListItemRenderer) }
                             val ytItem =
                                 RelatedPage.fromMusicResponsiveListItemRenderer(result1.musicResponsiveListItemRenderer!!)
                             if (ytItem != null) {

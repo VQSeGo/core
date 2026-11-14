@@ -38,7 +38,7 @@ internal class LocalPlaylistPagingSource(
                         Pair(songEntity, it)
                     }
                 }
-            Logger.d("LocalPlaylistPagingSource", "load: $songs")
+            Logger.d("LocalPlaylistPagingSource") { "load: ${Logger.clip(songs)}" }
             return LoadResult.Page(
                 data = sorted,
                 prevKey = if (currentPage == 0) null else currentPage - 1,
@@ -106,7 +106,7 @@ internal class LocalPlaylistTimeBasedPagingSource(
                         Pair(songEntity, it)
                     }
                 }
-            Logger.d("LocalPlaylistPagingSource", "load: $songs")
+            Logger.d("LocalPlaylistPagingSource") { "load: ${Logger.clip(songs)}" }
             val nextKey =
                 pairs?.lastOrNull()?.inPlaylist.let {
                     converter.dateToTimestamp(it)

@@ -159,7 +159,7 @@ internal class LocalPlaylistRepositoryImpl(
 
     override suspend fun getFullPlaylistTracks(id: Long): List<SongEntity> {
         val playlist = localDataSource.getLocalPlaylist(id) ?: return emptyList()
-        Logger.d(TAG, "getFullPlaylistTracks: $playlist")
+        Logger.d(TAG) { "getFullPlaylistTracks: ${Logger.clip(playlist)}" }
         val tracks = mutableListOf<SongEntity>()
         var currentPage = 0
         while (true) {

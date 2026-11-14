@@ -244,7 +244,7 @@ internal class PlaylistRepositoryImpl(
                                     ?.musicPlaylistShelfRenderer
                                     ?.contents
                         if (data != null) {
-                            Logger.d("Data", "data: $data")
+                            Logger.d("Data") { "data: ${Logger.clip(data)}" }
                             Logger.d("Data", "data size: ${data.size}")
                             listContent.addAll(data)
                         }
@@ -273,7 +273,7 @@ internal class PlaylistRepositoryImpl(
                                     ?.musicEditablePlaylistDetailHeaderRenderer
                                     ?.header
                                     ?.musicResponsiveHeaderRenderer
-                        Logger.d("Header", "header: $header")
+                        Logger.d("Header") { "header: ${Logger.clip(header)}" }
                         val finalContinueParam =
                             result.getPlaylistContinuation()
                         Logger.d("Repository", "playlist data: ${listContent.size}")
@@ -345,7 +345,7 @@ internal class PlaylistRepositoryImpl(
                                     ?.musicPlaylistShelfRenderer
                                     ?.contents
                         if (data != null) {
-                            Logger.d("getPlaylistData", "data: $data")
+                            Logger.d("getPlaylistData") { "data: ${Logger.clip(data)}" }
                             Logger.d("getPlaylistData", "data size: ${data.size}")
                         }
                         val header =
@@ -373,7 +373,7 @@ internal class PlaylistRepositoryImpl(
                                     ?.musicEditablePlaylistDetailHeaderRenderer
                                     ?.header
                                     ?.musicResponsiveHeaderRenderer
-                        Logger.d("getPlaylistData", "header: $header")
+                        Logger.d("getPlaylistData") { "header: ${Logger.clip(header)}" }
                         var continueParam =
                             result.getPlaylistContinuation()
                         var count = 0
@@ -477,7 +477,7 @@ internal class PlaylistRepositoryImpl(
                                     ?.musicPlaylistShelfRenderer
                                     ?.contents
                         if (data != null) {
-                            Logger.d("getPlaylistData", "data: $data")
+                            Logger.d("getPlaylistData") { "data: ${Logger.clip(data)}" }
                             Logger.d("getPlaylistData", "data size: ${data.size}")
                         }
                         val header =
@@ -505,7 +505,7 @@ internal class PlaylistRepositoryImpl(
                                     ?.musicEditablePlaylistDetailHeaderRenderer
                                     ?.header
                                     ?.musicResponsiveHeaderRenderer
-                        Logger.d("getPlaylistData", "header: $header")
+                        Logger.d("getPlaylistData") { "header: ${Logger.clip(header)}" }
                         val continueParam =
                             result.getPlaylistContinuation()
                         val radioEndpoint =
