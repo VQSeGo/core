@@ -69,7 +69,7 @@ class DiscordRpc(
         val buttons =
             listOf(
                 "Listen on SimpMusic" to "https://simpmusic.org/app/watch?v=${song.videoId}",
-                "Visit SimpMusic" to "https://github.com/maxrave-dev/SimpMusic",
+                "Visit SimpMusic" to "https://github.com/VQSeGo/SimpMusic",
             )
         gateway.sendPresence(
             Presence(
