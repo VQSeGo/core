@@ -11,8 +11,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Player.COMMAND_GET_TIMELINE
-import androidx.media3.common.Player.COMMAND_SEEK_TO_NEXT
-import androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.LibraryResult
@@ -115,18 +113,10 @@ internal class SimpleMediaSessionCallback(
         playerCommand: Int,
     ): Int {
         Logger.d(TAG, "Player Command $playerCommand")
-        scope.launch {
-            when (playerCommand) {
-                COMMAND_SEEK_TO_NEXT -> {
-                    mediaPlayerHandler.onPlayerEvent(PlayerEvent.Next)
-                }
-                COMMAND_SEEK_TO_PREVIOUS -> {
-                    mediaPlayerHandler.onPlayerEvent(PlayerEvent.Previous)
-                }
-                COMMAND_GET_TIMELINE -> {
-                }
-            }
-        }
+        // Next and Previous are not forwarded to the handler here: the session runs them itself on
+        // its player, whose navigation goes to CrossfadeExoPlayerAdapter. Doing both ran every press
+        // from the notification or a media key twice, and Previous past 3 s then went to the previous
+        // track instead of the start of this one (the first call had just sought to 0).
         return super.onPlayerCommandRequest(session, controller, playerCommand)
     }
 
