@@ -715,10 +715,17 @@ class JvmMediaPlayerHandlerImpl(
                     songEntityJob?.cancel()
                     songEntityJob =
                         coroutineScope.launch {
+                            // The row is written several times as the track starts, so it emits several times.
+                            var skippedAsExplicit = false
                             songRepository.getSongAsFlow(videoId).cancellable().filterNotNull().collectLatest { songEntity ->
                                 // A subscription that outlived its track must not touch the new one.
                                 if (nowPlayingState.value.mediaItem.mediaId != mediaItem.mediaId) return@collectLatest
+                                if (skippedAsExplicit) return@collectLatest
                                 if (dataStoreManager.explicitContentEnabled.first() == FALSE && songEntity.isExplicit) {
+                                    // Checked again after the read above, and against the player: a second
+                                    // emission must not skip the track after this one too (seen on Android).
+                                    if (player.currentMediaItem?.mediaId != mediaItem.mediaId) return@collectLatest
+                                    skippedAsExplicit = true
                                     showToast(ToastType.ExplicitContent)
                                     if (player.hasNextMediaItem()) {
                                         player.seekToNext()
