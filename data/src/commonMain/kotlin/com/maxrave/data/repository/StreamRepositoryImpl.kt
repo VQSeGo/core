@@ -44,6 +44,7 @@ private typealias PlayerResult = Result<Triple<String?, PlayerResponse, MediaTyp
 internal class StreamRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
+    private val dataStoreManager: DataStoreManager,
 ) : StreamRepository {
     /**
      * Resolutions run here, not in the caller: one that outlives its caller (the player's 15 s limit
@@ -108,9 +109,13 @@ internal class StreamRepositoryImpl(
             Logger.d("Stream", "now: ${now()}")
             Logger.d("Stream", "isExpired: ${oldFormat.expiredTime.isBefore(now())}")
             if (oldFormat.expiredTime.isBefore(now())) {
-                youTube
-                    .player(videoId)
-                    .onSuccess { triple ->
+                // Through the shared answer, with the audio stream's key: a cached track whose format
+                // expired used to resolve twice in a row (here and for the stream), each one in full.
+                sharedPlayer(
+                    videoId,
+                    noLogIn = false,
+                    preferredAudioLanguage = dataStoreManager.preferredAudioLanguage.first(),
+                ).onSuccess { triple ->
                         val response = triple.second
                         localDataSource.updateNewFormat(
                             oldFormat.copy(

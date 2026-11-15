@@ -266,8 +266,8 @@ private fun provideResolvingDataSourceFactory(
         Logger.d("Stream", mediaId.startsWith(MERGING_DATA_TYPE.VIDEO).toString())
         if (downloadCache.isFullyCached(mediaId, dataSpec.position)) {
             // Only on the first chunk: the subrange below makes the resolver run once per
-            // chunk, and updateFormat is a fire-and-forget youTube.player() call with no
-            // in-flight dedup, so leaving it ungated would fan out one request per 5 MiB.
+            // chunk, and updateFormat is a fire-and-forget refresh of the tracking links, so
+            // leaving it ungated would ask once per 5 MiB (shared answer or not).
             if (dataSpec.position == 0L) {
                 coroutineScope.launch(Dispatchers.IO) {
                     streamRepository.updateFormat(
