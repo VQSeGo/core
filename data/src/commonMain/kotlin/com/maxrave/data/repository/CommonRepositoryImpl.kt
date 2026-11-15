@@ -11,7 +11,6 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.CommonRepository
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.kotlinytmusicscraper.extractor.BravePipeFirst
-import com.maxrave.kotlinytmusicscraper.models.YouTubeLocale
 import com.maxrave.logger.Logger
 import com.maxrave.spotify.Spotify
 import kotlinx.coroutines.CoroutineScope
@@ -261,17 +260,6 @@ internal class CommonRepositoryImpl(
             )
         }
 
-    private fun youTubeLocale(
-        location: String,
-        language: String,
-    ) = YouTubeLocale(
-        location,
-        try {
-            language.substring(0..1)
-        } catch (e: Exception) {
-            "en"
-        },
-    )
 }
 
 private data class ProxyData(

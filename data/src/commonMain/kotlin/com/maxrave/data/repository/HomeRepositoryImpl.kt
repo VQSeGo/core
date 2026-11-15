@@ -95,6 +95,7 @@ internal class HomeRepositoryImpl(
             if (cached != null) {
                 emit(Resource.Success(cached))
             }
+            youTube.applyStoredLocale(dataStoreManager)
             val result = youTube.customQuery(browseId = "FEmusic_home", params = params)
             // mapCatching only around the plain parser: a parse that throws becomes an error, not silence.
             result
@@ -180,6 +181,7 @@ internal class HomeRepositoryImpl(
         viewString: String,
         songString: String
     ): Flow<Resource<Pair<String?, List<HomeItem>>>> = flow {
+        youTube.applyStoredLocale(dataStoreManager)
         youTube
             .customQuery(browseId = "", continuation = continueParam)
             .onSuccess { response ->
@@ -211,6 +213,7 @@ internal class HomeRepositoryImpl(
         musicVideoString: String,
     ): Flow<Resource<List<HomeItem>>> =
         flow {
+            youTube.applyStoredLocale(dataStoreManager)
             youTube
                 .newRelease()
                 .onSuccess { result ->
@@ -222,6 +225,7 @@ internal class HomeRepositoryImpl(
 
     override fun getChartData(countryCode: String): Flow<Resource<Chart>> =
         flow {
+            youTube.applyStoredLocale(dataStoreManager)
             runCatching {
                 youTube
                     .customQuery("FEmusic_charts", country = countryCode)
@@ -259,6 +263,7 @@ internal class HomeRepositoryImpl(
             if (cached != null) {
                 emit(Resource.Success<Mood>(cached))
             }
+            youTube.applyStoredLocale(dataStoreManager)
             runCatching {
                 youTube
                     .moodAndGenres()
