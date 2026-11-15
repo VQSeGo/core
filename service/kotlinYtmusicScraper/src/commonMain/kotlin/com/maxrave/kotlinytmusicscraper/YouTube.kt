@@ -279,21 +279,6 @@ class YouTube {
                         ?.mapNotNull {
                             SearchPage.toYTItem(it.musicResponsiveListItemRenderer)
                         }.orEmpty(),
-                listPodcast =
-                    response.contents
-                        ?.tabbedSearchResultsRenderer
-                        ?.tabs
-                        ?.firstOrNull()
-                        ?.tabRenderer
-                        ?.content
-                        ?.sectionListRenderer
-                        ?.contents
-                        ?.lastOrNull()
-                        ?.musicShelfRenderer
-                        ?.contents
-                        ?.mapNotNull {
-                            SearchPage.toPodcast(it.musicResponsiveListItemRenderer)
-                        }.orEmpty(),
                 continuation =
                     response.contents
                         ?.tabbedSearchResultsRenderer
@@ -326,11 +311,6 @@ class YouTube {
                         ?.mapNotNull {
                             SearchPage.toYTItem(it.musicResponsiveListItemRenderer)
                         }!!,
-                listPodcast =
-                    response.continuationContents.musicShelfContinuation.contents
-                        .mapNotNull {
-                            SearchPage.toPodcast(it.musicResponsiveListItemRenderer)
-                        }.orEmpty(),
                 continuation =
                     response.continuationContents.musicShelfContinuation.continuations
                         ?.getContinuation(),
@@ -1088,6 +1068,8 @@ class YouTube {
                     items =
                         content.gridRenderer.items
                             .mapNotNull(GridRenderer.Item::musicTwoRowItemRenderer)
+                            // Podcast shows are not shown.
+                            .filterNot { it.isPodcast }
                             .mapNotNull { RelatedPage.fromMusicTwoRowItemRenderer(it, songString) },
                     moods =
                         content.gridRenderer.items
@@ -1107,9 +1089,11 @@ class YouTube {
                             ?.text,
                     items =
                         content.musicCarouselShelfRenderer.contents.mapNotNull { item ->
-                            item.musicTwoRowItemRenderer?.let { RelatedPage.fromMusicTwoRowItemRenderer(it, songString) }
+                            item.musicTwoRowItemRenderer
+                                // Podcast shows are not shown.
+                                ?.takeUnless { it.isPodcast }
+                                ?.let { RelatedPage.fromMusicTwoRowItemRenderer(it, songString) }
                                 ?: item.musicResponsiveListItemRenderer?.let(::browseListItem)
-                                ?: item.musicMultiRowListItemRenderer?.let(::browseEpisode)
                         },
                     moods =
                         content.musicCarouselShelfRenderer.contents
@@ -1128,7 +1112,6 @@ class YouTube {
                     items =
                         content.musicShelfRenderer.contents.orEmpty().mapNotNull { item ->
                             item.musicResponsiveListItemRenderer?.let(::browseListItem)
-                                ?: item.musicMultiRowListItemRenderer?.let(::browseEpisode)
                         },
                 )
             }
@@ -1153,19 +1136,6 @@ class YouTube {
     // rows when they are plain tracks.
     private fun browseListItem(renderer: MusicResponsiveListItemRenderer): YTItem? =
         SearchPage.toYTItem(renderer) ?: RelatedPage.fromMusicResponsiveListItemRenderer(renderer)
-
-    // A podcast episode, played like a track — the same fields HomeParser reads for one.
-    private fun browseEpisode(row: MusicShelfRenderer.Content.MusicMultiRowListItemRenderer): YTItem? =
-        SongItem(
-            id = row.onTap?.watchEndpoint?.videoId ?: return null,
-            title =
-                row.title
-                    ?.runs
-                    ?.firstOrNull()
-                    ?.text ?: return null,
-            artists = emptyList(),
-            thumbnail = row.thumbnail?.musicThumbnailRenderer?.getThumbnailUrl() ?: return null,
-        )
 
     suspend fun getFullMetadata(videoId: String): Result<YouTubeInitialPage> =
         runCatching {
@@ -2013,7 +1983,6 @@ class YouTube {
             val FILTER_ARTIST: SearchFilter = SearchFilter("EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D")
             val FILTER_FEATURED_PLAYLIST: SearchFilter = SearchFilter("EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ%3D")
             val FILTER_COMMUNITY_PLAYLIST: SearchFilter = SearchFilter("EgeKAQQoAEABagoQAxAEEAoQCRAF")
-            val FILTER_PODCAST: SearchFilter = SearchFilter("EgWKAQJQAWoIEBAQERADEBU%3D")
         }
     }
 

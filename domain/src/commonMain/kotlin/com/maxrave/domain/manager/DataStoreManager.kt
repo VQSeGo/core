@@ -415,7 +415,7 @@ interface DataStoreManager {
 
     /**
      * Language code (e.g. "vi") of the audio track to prefer on videos that ship several — dubbed
-     * podcasts, mostly. Empty means the original track. Deliberately NOT defaulted to the app
+     * a multi-audio video, mostly. Empty means the original track. Deliberately NOT defaulted to the app
      * language the way [youtubeSubtitleLanguage] is: that would swap the speaker's own voice for an
      * AI dub for every user whose app language has one.
      */

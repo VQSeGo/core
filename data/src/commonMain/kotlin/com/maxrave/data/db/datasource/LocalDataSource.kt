@@ -15,7 +15,6 @@ import com.maxrave.domain.data.entities.LyricsOffsetEntity
 import com.maxrave.domain.data.entities.NewFormatEntity
 import com.maxrave.domain.data.entities.PairSongLocalPlaylist
 import com.maxrave.domain.data.entities.PlaylistEntity
-import com.maxrave.domain.data.entities.PodcastsEntity
 import com.maxrave.domain.data.entities.QueueEntity
 import com.maxrave.domain.data.entities.SearchHistory
 import com.maxrave.domain.data.entities.SetVideoIdEntity
@@ -642,67 +641,6 @@ internal class LocalDataSource(
     ) = databaseDao.removeTranslatedLyrics(videoId, language)
 
     suspend fun insertTranslatedLyrics(translatedLyricsEntity: TranslatedLyricsEntity) = databaseDao.insertTranslatedLyrics(translatedLyricsEntity)
-
-    suspend fun insertPodcast(podcastsEntity: PodcastsEntity) = databaseDao.insertPodcast(podcastsEntity)
-
-    suspend fun insertEpisodes(episodes: List<EpisodeEntity>) = databaseDao.insertEpisodes(episodes)
-
-    suspend fun getPodcastWithEpisodes(podcastId: String) = databaseDao.getPodcastWithEpisodes(podcastId)
-
-    suspend fun getAllPodcasts(limit: Int) = databaseDao.getAllPodcasts(limit)
-
-    suspend fun getAllPodcastWithEpisodes(
-        limit: Int,
-        offset: Int,
-    ) = databaseDao.getAllPodcastWithEpisodes(
-        limit,
-        offset,
-    )
-
-    suspend fun getPodcast(podcastId: String) = databaseDao.getPodcast(podcastId)
-
-    suspend fun getFavoritePodcasts(
-        limit: Int,
-        offset: Int,
-    ) = databaseDao.getFavoritePodcasts(
-        limit,
-        offset,
-    )
-
-    suspend fun getEpisode(videoId: String) = databaseDao.getEpisode(videoId)
-
-    suspend fun deletePodcast(podcastId: String) = databaseDao.deletePodcast(podcastId)
-
-    suspend fun favoritePodcast(
-        podcastId: String,
-        isFavorite: Boolean,
-    ): Boolean {
-        val podcast = databaseDao.getPodcast(podcastId)
-        if (podcast != null) {
-            val updatedPodcast =
-                podcast.copy(
-                    isFavorite = isFavorite,
-                    favoriteTime = if (isFavorite) now() else null,
-                )
-            return databaseDao.insertPodcast(updatedPodcast) > 0
-        } else {
-            return false
-        }
-    }
-
-    suspend fun getPodcastEpisodes(
-        podcastId: String,
-        limit: Int,
-        offset: Int,
-    ) = databaseDao.getPodcastEpisodes(
-        podcastId,
-        limit,
-        offset,
-    )
-
-    suspend fun updatePodcastInLibraryNow(id: String) = databaseDao.updatePodcastInLibrary(id,
-        now()
-    )
 
     suspend fun insertYourYouTubePlaylist(yourYouTubePlaylist: YourYouTubePlaylistList) =
         databaseDao.insertYourYouTubePlaylist(yourYouTubePlaylist)

@@ -67,7 +67,6 @@ interface DatabaseDao {
         a.addAll(getAllArtists(30))
         a.addAll(getAllAlbums(30))
         a.addAll(getAllPlaylists(30))
-        a.addAll(getAllPodcasts(30))
         val sortedList =
             a.sortedWith<RecentlyType>(
                 Comparator { p0, p1 ->
@@ -77,7 +76,6 @@ interface DatabaseDao {
                             is ArtistEntity -> p0.inLibrary
                             is AlbumEntity -> p0.inLibrary
                             is PlaylistEntity -> p0.inLibrary
-                            is PodcastsEntity -> p0.inLibrary
                             else -> null
                         }
                     val timeP1: LocalDateTime? =
@@ -86,7 +84,6 @@ interface DatabaseDao {
                             is ArtistEntity -> p1.inLibrary
                             is AlbumEntity -> p1.inLibrary
                             is PlaylistEntity -> p1.inLibrary
-                            is PodcastsEntity -> p1.inLibrary
                             else -> null
                         }
                     if (timeP0 == null || timeP1 == null) {

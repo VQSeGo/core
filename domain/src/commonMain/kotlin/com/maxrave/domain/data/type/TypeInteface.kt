@@ -29,7 +29,6 @@ interface PlaylistType :
         RADIO,
         LOCAL,
         ALBUM,
-        PODCAST,
     }
 
     fun playlistType(): Type
@@ -58,7 +57,6 @@ interface SearchResultType {
         PLAYLIST,
         ALBUM,
         ARTIST,
-        PODCAST,
     }
 
     fun objectType(): Type

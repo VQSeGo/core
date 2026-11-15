@@ -4,7 +4,6 @@ import com.maxrave.domain.data.model.browse.artist.ResultPlaylist
 import com.maxrave.domain.data.model.home.chart.Artists
 import com.maxrave.domain.data.model.home.chart.Chart
 import com.maxrave.domain.data.model.home.chart.ChartItemPlaylist
-import com.maxrave.domain.data.model.home.chart.ChartPodcasts
 import com.maxrave.domain.data.model.home.chart.ItemArtist
 import com.maxrave.kotlinytmusicscraper.models.MusicCarouselShelfRenderer
 import com.maxrave.kotlinytmusicscraper.models.SectionListRenderer
@@ -13,7 +12,6 @@ internal fun parseChart(data: SectionListRenderer?): Chart? {
     val content = data?.contents ?: return null
     val listArtistItem: ArrayList<ItemArtist> = arrayListOf()
     val listItemPlaylist: ArrayList<ChartItemPlaylist> = arrayListOf()
-    var podcasts: ChartPodcasts? = null
     content.forEach {
         val contents = it.musicCarouselShelfRenderer?.contents ?: return@forEach
         val pageType =
@@ -28,24 +26,11 @@ internal fun parseChart(data: SectionListRenderer?): Chart? {
         if (pageType == "MUSIC_PAGE_TYPE_ARTIST") {
             parseArtistChart(contents)?.let { listArtistItem.addAll(it) }
         } else if (pageType == "MUSIC_PAGE_TYPE_PODCAST_SHOW_DETAIL_PAGE") {
-            // Same ranked rows as the artist chart; the second column is the show's author.
-            parseArtistChart(contents)?.takeIf { shows -> shows.isNotEmpty() }?.let { shows ->
-                podcasts =
-                    ChartPodcasts(
-                        title =
-                            it.musicCarouselShelfRenderer
-                                ?.header
-                                ?.musicCarouselShelfBasicHeaderRenderer
-                                ?.title
-                                ?.runs
-                                ?.firstOrNull()
-                                ?.text ?: "",
-                        shows = shows,
-                    )
-            }
+            // Podcast shows are not shown: this shelf is dropped whole.
+            return@forEach
         } else {
-            // Only two-row playlist cards belong here. A shelf of list rows — the US chart's "Weekly
-            // top podcast shows" — used to hit `return null` and blank the whole chart.
+            // Only two-row playlist cards belong here; a shelf of list rows of any other kind adds
+            // nothing, and must not blank the whole chart.
             val playlists =
                 contents.mapNotNull { contentItem ->
                     val item = contentItem.musicTwoRowItemRenderer ?: return@mapNotNull null
@@ -82,7 +67,6 @@ internal fun parseChart(data: SectionListRenderer?): Chart? {
         artists = Artists(itemArtists = listArtistItem, playlist = ""),
         countries = null,
         listChartItem = listItemPlaylist,
-        podcasts = podcasts,
     )
 }
 

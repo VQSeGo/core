@@ -15,7 +15,6 @@ import com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.metadata.Line
 import com.maxrave.domain.data.model.metadata.Lyrics
-import com.maxrave.domain.data.model.podcast.PodcastBrowse
 import com.maxrave.domain.data.model.searchResult.songs.Album
 import com.maxrave.domain.data.model.searchResult.songs.Artist
 import com.maxrave.domain.data.model.searchResult.songs.SongsResult
@@ -357,36 +356,6 @@ fun TranslatedLyricsEntity.toLyrics(): Lyrics =
         lines = this.lines,
         syncType = this.syncType,
     )
-
-fun PodcastBrowse.EpisodeItem.toTrack(): Track =
-    Track(
-        album = null,
-        artists = listOf(this.author),
-        duration = this.durationString,
-        durationSeconds = null,
-        isAvailable = true,
-        isExplicit = false,
-        likeStatus = "INDIFFERENT",
-        thumbnails = this.thumbnail,
-        title = this.title,
-        videoId = this.videoId,
-        // The podcast browse response carries no music config; `category`/`resultType` below are
-        // what mark this as an episode, so there is nothing to invent here.
-        videoType = null,
-        category = "Podcast",
-        feedbackTokens = null,
-        resultType = "Podcast",
-        year = this.createdDay,
-    )
-
-@JvmName("PodcastBrowseEpisodeItemtoListTrack")
-fun List<PodcastBrowse.EpisodeItem>.toListTrack(): ArrayList<Track> {
-    val listTrack = arrayListOf<Track>()
-    for (item in this) {
-        listTrack.add(item.toTrack())
-    }
-    return listTrack
-}
 
 /**
  * Converts RICH_SYNCED Lyrics to LINE_SYNCED Lyrics by stripping word-level <MM:SS.mm> timing

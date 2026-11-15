@@ -6,11 +6,10 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.Relation
-import com.maxrave.domain.data.type.PlaylistType
-import com.maxrave.domain.data.type.RecentlyType
 import com.maxrave.domain.extension.now
 import kotlinx.datetime.LocalDateTime
 
+// Kept only so the Room schema is unchanged: podcasts were removed from the app, nothing reads or writes these tables.
 @Entity(tableName = "podcast_table")
 data class PodcastsEntity(
     @PrimaryKey
@@ -25,12 +24,7 @@ data class PodcastsEntity(
     val inLibrary: LocalDateTime = now(),
     val favoriteTime: LocalDateTime? = null, // Nullable to allow for non-favorite podcasts
     val listEpisodes: List<String>, // List of episode video IDs
-) : RecentlyType,
-    PlaylistType {
-    override fun objectType(): RecentlyType.Type = RecentlyType.Type.PLAYLIST
-
-    override fun playlistType(): PlaylistType.Type = PlaylistType.Type.PODCAST
-}
+)
 
 @Entity(
     tableName = "podcast_episode_table",

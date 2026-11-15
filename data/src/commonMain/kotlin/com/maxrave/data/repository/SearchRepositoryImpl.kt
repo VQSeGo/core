@@ -2,7 +2,6 @@ package com.maxrave.data.repository
 
 import com.maxrave.data.db.datasource.LocalDataSource
 import com.maxrave.data.mapping.toDomainSearchSuggestions
-import com.maxrave.data.parser.parsePodcast
 import com.maxrave.data.parser.search.parseSearchAlbum
 import com.maxrave.data.parser.search.parseSearchArtist
 import com.maxrave.data.parser.search.parseSearchPlaylist
@@ -112,43 +111,6 @@ internal class SearchRepositoryImpl(
                     }.onFailure { e ->
                         Logger.d("Search", "Error: ${e.message}")
                         emit(Resource.Error<ArrayList<VideosResult>>(e.message.toString()))
-                    }
-            }
-        }.flowOn(Dispatchers.IO)
-
-    override fun getSearchDataPodcast(query: String): Flow<Resource<ArrayList<PlaylistsResult>>> =
-        flow {
-            runCatching {
-                youTube
-                    .search(query, YouTube.SearchFilter.FILTER_PODCAST)
-                    .onSuccess { result ->
-                        println(query)
-                        val listPlaylist: ArrayList<PlaylistsResult> = arrayListOf()
-                        var countinueParam = result.continuation
-                        Logger.d("Podcast") { "result: ${Logger.clip(result)}" }
-                        parsePodcast(result.listPodcast).let { list ->
-                            listPlaylist.addAll(list)
-                        }
-                        var count = 0
-                        while (count < 2 && countinueParam != null) {
-                            youTube
-                                .searchContinuation(countinueParam)
-                                .onSuccess { values ->
-                                    parsePodcast(values.listPodcast).let { list ->
-                                        listPlaylist.addAll(list)
-                                    }
-                                    count++
-                                    countinueParam = values.continuation
-                                }.onFailure {
-                                    Logger.e("Continue", "Error: ${it.message}")
-                                    countinueParam = null
-                                    count++
-                                }
-                        }
-                        emit(Resource.Success<ArrayList<PlaylistsResult>>(listPlaylist))
-                    }.onFailure { e ->
-                        Logger.d("Search", "Error: ${e.message}")
-                        emit(Resource.Error<ArrayList<PlaylistsResult>>(e.message.toString()))
                     }
             }
         }.flowOn(Dispatchers.IO)

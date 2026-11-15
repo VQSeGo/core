@@ -122,6 +122,7 @@ internal fun parseMixedContent(
                         ?.watchEndpoint
                         ?.toYouTubeWatchEndpoint()
                 val listContent = mutableListOf<Content?>()
+                var droppedPodcasts = false
                 if (!contentList.isNullOrEmpty()) {
                     for (result1 in contentList) {
                         val musicTwoRowItemRenderer = result1.musicTwoRowItemRenderer
@@ -454,35 +455,9 @@ internal fun parseMixedContent(
                                     }
                                 }
                             } else if (musicTwoRowItemRenderer.isPodcast) {
-                                listContent.add(
-                                    Content(
-                                        album = null,
-                                        artists = listOf(),
-                                        description =
-                                            musicTwoRowItemRenderer.subtitle
-                                                ?.runs
-                                                ?.joinToString("") { it.text },
-                                        isExplicit = null,
-                                        playlistId = null,
-                                        browseId = musicTwoRowItemRenderer.navigationEndpoint?.browseEndpoint?.browseId,
-                                        thumbnails =
-                                            musicTwoRowItemRenderer.thumbnailRenderer
-                                                ?.musicThumbnailRenderer
-                                                ?.thumbnail
-                                                ?.thumbnails
-                                                ?.toListThumbnail()
-                                                ?: listOf(),
-                                        title =
-                                            musicTwoRowItemRenderer.title
-                                                ?.runs
-                                                ?.get(0)
-                                                ?.text
-                                                ?: "",
-                                        videoId = null,
-                                        views = null,
-                                        radio = null,
-                                    ),
-                                )
+                                // Podcasts are not shown: a show card would lead nowhere.
+                                droppedPodcasts = true
+                                continue
                             } else {
                                 continue
                             }
@@ -528,41 +503,16 @@ internal fun parseMixedContent(
                                 listContent.add(content)
                             }
                         } else if (result1.musicMultiRowListItemRenderer != null) {
-                            val multiRow = result1.musicMultiRowListItemRenderer ?: break
-                            val content =
-                                Content(
-                                    description =
-                                        multiRow.description
-                                            ?.runs
-                                            ?.firstOrNull()
-                                            ?.text,
-                                    thumbnails =
-                                        multiRow.thumbnail
-                                            ?.musicThumbnailRenderer
-                                            ?.thumbnail
-                                            ?.thumbnails
-                                            ?.toListThumbnail()
-                                            ?: listOf(),
-                                    title =
-                                        multiRow.title
-                                            ?.runs
-                                            ?.get(0)
-                                            ?.text ?: "",
-                                    videoId = multiRow.onTap?.watchEndpoint?.videoId ?: "",
-                                    album = null,
-                                    artists = emptyList(),
-                                    isExplicit = false,
-                                    playlistId = null,
-                                    browseId = null,
-                                    views = null,
-                                )
-                            listContent.add(content)
+                            // A multi-row card is a podcast episode; podcasts are not shown.
+                            droppedPodcasts = true
+                            continue
                         } else {
                             break
                         }
                     }
                 }
-                if (title.isNotEmpty()) {
+                // A shelf that held nothing but podcasts is dropped whole, not left as an empty title.
+                if (title.isNotEmpty() && !(droppedPodcasts && listContent.isEmpty())) {
                     list.add(
                         HomeItem(
                             contents = listContent,

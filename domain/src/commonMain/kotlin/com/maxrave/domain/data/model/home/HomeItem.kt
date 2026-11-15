@@ -41,7 +41,6 @@ data class HomeItem(
             const val PAGE_TYPE_PLAYLIST = "MUSIC_PAGE_TYPE_PLAYLIST"
             const val PAGE_TYPE_ARTIST = "MUSIC_PAGE_TYPE_ARTIST"
             const val PAGE_TYPE_USER_CHANNEL = "MUSIC_PAGE_TYPE_USER_CHANNEL"
-            const val PAGE_TYPE_PODCAST = "MUSIC_PAGE_TYPE_PODCAST_SHOW_DETAIL_PAGE"
         }
     }
 }

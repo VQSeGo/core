@@ -16,18 +16,12 @@ data class PlaylistsResult(
 ) : PlaylistType,
     SearchResultType {
     override fun playlistType(): PlaylistType.Type =
-        if (resultType == "Podcast") {
-            PlaylistType.Type.PODCAST
-        } else if (browseId.isRadioPlaylistId()) {
+        if (browseId.isRadioPlaylistId()) {
             PlaylistType.Type.RADIO
         } else {
             PlaylistType.Type.YOUTUBE_PLAYLIST
         }
 
     override fun objectType(): SearchResultType.Type =
-        if (resultType == "Podcast") {
-            SearchResultType.Type.PODCAST
-        } else {
-            SearchResultType.Type.PLAYLIST
-        }
+        SearchResultType.Type.PLAYLIST
 }

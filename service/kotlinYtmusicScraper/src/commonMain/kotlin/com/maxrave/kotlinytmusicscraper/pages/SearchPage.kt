@@ -7,7 +7,6 @@ import com.maxrave.kotlinytmusicscraper.models.ArtistItem
 import com.maxrave.kotlinytmusicscraper.models.MusicResponsiveListItemRenderer
 import com.maxrave.kotlinytmusicscraper.models.PlaylistItem
 import com.maxrave.kotlinytmusicscraper.models.SongItem
-import com.maxrave.kotlinytmusicscraper.models.Thumbnails
 import com.maxrave.kotlinytmusicscraper.models.YTItem
 import com.maxrave.kotlinytmusicscraper.models.oddElements
 import com.maxrave.kotlinytmusicscraper.models.splitBySeparator
@@ -15,54 +14,10 @@ import com.maxrave.kotlinytmusicscraper.utils.parseTime
 
 data class SearchResult(
     val items: List<YTItem>,
-    val listPodcast: List<PodcastItem>,
     val continuation: String? = null,
 )
 
 object SearchPage {
-    fun toPodcast(renderer: MusicResponsiveListItemRenderer?): PodcastItem? {
-        return if (renderer == null) {
-            null
-        } else {
-            PodcastItem(
-                id = renderer.navigationEndpoint?.browseEndpoint?.browseId ?: return null,
-                title =
-                    renderer.flexColumns
-                        .firstOrNull()
-                        ?.musicResponsiveListItemFlexColumnRenderer
-                        ?.text
-                        ?.runs
-                        ?.firstOrNull()
-                        ?.text
-                        ?: return null,
-                author =
-                    Artist(
-                        name =
-                            renderer.flexColumns
-                                .lastOrNull()
-                                ?.musicResponsiveListItemFlexColumnRenderer
-                                ?.text
-                                ?.runs
-                                ?.firstOrNull()
-                                ?.text
-                                ?: return null,
-                        id =
-                            renderer.flexColumns
-                                .lastOrNull()
-                                ?.musicResponsiveListItemFlexColumnRenderer
-                                ?.text
-                                ?.runs
-                                ?.firstOrNull()
-                                ?.navigationEndpoint
-                                ?.browseEndpoint
-                                ?.browseId
-                                ?: return null,
-                    ),
-                thumbnail = renderer.thumbnail?.musicThumbnailRenderer?.thumbnail ?: return null,
-            )
-        }
-    }
-
     fun toYTItem(renderer: MusicResponsiveListItemRenderer?): YTItem? {
         if (renderer == null) {
             return null
@@ -263,10 +218,3 @@ object SearchPage {
         }
     }
 }
-
-data class PodcastItem(
-    val id: String,
-    val title: String,
-    val author: Artist,
-    val thumbnail: Thumbnails,
-)
