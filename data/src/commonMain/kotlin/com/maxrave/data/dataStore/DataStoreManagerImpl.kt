@@ -861,19 +861,6 @@ internal class DataStoreManagerImpl(
         }
     }
 
-    override val romanizationLanguages =
-        settingsDataStore.data.map { preferences ->
-            preferences[ROMANIZATION_LANGUAGES] ?: ""
-        }
-
-    override suspend fun setRomanizationLanguages(languages: String) {
-        withContext(Dispatchers.IO) {
-            settingsDataStore.edit { settings ->
-                settings[ROMANIZATION_LANGUAGES] = languages
-            }
-        }
-    }
-
     override val usingProxy =
         settingsDataStore.data.map { preferences ->
             preferences[USING_PROXY] ?: FALSE
@@ -1485,7 +1472,6 @@ internal class DataStoreManagerImpl(
         val CUSTOM_THEME_COLOR = stringPreferencesKey("custom_theme_color")
         val NOW_PLAYING_STYLE = stringPreferencesKey("now_playing_style")
         val LYRICS_STYLE = stringPreferencesKey("lyrics_style")
-        val ROMANIZATION_LANGUAGES = stringPreferencesKey("romanization_languages")
         val USING_PROXY = stringPreferencesKey("using_proxy")
         val PROXY_TYPE = stringPreferencesKey("proxy_type")
         val PROXY_HOST = stringPreferencesKey("proxy_host")
