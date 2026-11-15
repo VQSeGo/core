@@ -427,10 +427,6 @@ interface DataStoreManager {
 
     suspend fun setBackupDownloaded(backupDownloaded: Boolean)
 
-    val enableLiquidGlass: Flow<String>
-
-    suspend fun setEnableLiquidGlass(enable: Boolean)
-
     /** One of [THEME_MODE_SYSTEM], [THEME_MODE_DARK], [THEME_MODE_LIGHT]. */
     val themeMode: Flow<String>
 
