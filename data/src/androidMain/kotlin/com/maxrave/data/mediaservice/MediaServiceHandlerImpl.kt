@@ -112,6 +112,9 @@ import kotlin.math.pow
 
 private val TAG = "Media3ServiceHandlerImpl"
 
+/** How far the position must move before a track counts as playing for [UnplayableTrackSkipper]. */
+private const val PLAYING_CONFIRMED_MS = 1_000L
+
 internal class MediaServiceHandlerImpl(
     private val dataStoreManager: DataStoreManager,
     private val songRepository: SongRepository,
@@ -570,13 +573,21 @@ internal class MediaServiceHandlerImpl(
         songEntityJob?.cancel()
         songEntityJob =
             coroutineScope.launch {
+                // The row is written several times as the track starts, so it emits several times.
+                var skippedAsExplicit = false
                 songRepository.getSongAsFlow(videoId).cancellable().filterNotNull().collectLatest { songEntity ->
                     // A subscription that outlived its track must not touch the new one.
                     if (nowPlayingState.value.mediaItem.mediaId != mediaItem.mediaId) {
                         Logger.i(TAG, "Dropped the song row of $videoId from a previous track")
                         return@collectLatest
                     }
+                    if (skippedAsExplicit) return@collectLatest
                     if (dataStoreManager.explicitContentEnabled.first() == FALSE && songEntity.isExplicit) {
+                        // Checked again after the read above, and against the player, which moves before
+                        // nowPlayingState does: a second emission used to pass the check while the first
+                        // skip was under way and skip the track after this one as well.
+                        if (player.currentMediaItem?.mediaId != mediaItem.mediaId) return@collectLatest
+                        skippedAsExplicit = true
                         showToast(ToastType.ExplicitContent)
                         if (player.hasNextMediaItem()) {
                             player.seekToNext()
@@ -886,9 +897,15 @@ internal class MediaServiceHandlerImpl(
                 // what a second hardcoded copy of the number did.
                 val tickIntervalMs = 50L
                 var sinceLastPositionSaveMs = 0L
+                val startPosition = player.currentPosition
+                var playingConfirmed = false
                 while (true) {
                     delay(tickIntervalMs)
                     _simpleMediaState.value = SimpleMediaState.Progress(player.currentPosition)
+                    if (!playingConfirmed && player.currentPosition - startPosition >= PLAYING_CONFIRMED_MS) {
+                        playingConfirmed = true
+                        unplayableTrackSkipper.onPlaying()
+                    }
                     sinceLastPositionSaveMs += tickIntervalMs
                     if (sinceLastPositionSaveMs >= positionPersistIntervalMs) {
                         sinceLastPositionSaveMs = 0
@@ -2653,7 +2670,10 @@ internal class MediaServiceHandlerImpl(
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         _controlState.value = _controlState.value.copy(isPlaying = isPlaying)
         if (isPlaying) {
-            unplayableTrackSkipper.onPlaying()
+            // No unplayableTrackSkipper.onPlaying() here: the crossfade adapter reports playing for a
+            // track with no source too, which cleared the failure count on every skip (one message per
+            // skipped track, never the jump to a local track or the stop after three). The progress
+            // loop clears it once the position really moves.
             startProgressUpdate()
             nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
         } else {

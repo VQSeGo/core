@@ -15,7 +15,8 @@ import com.maxrave.logger.Logger
  *   track that plays from disk ([MediaPlayerInterface.isLocallyPlayable]), or the next one if none.
  * - Stop (pause) at the end of the queue, under Repeat One, and after [maxConsecutiveFailures]
  *   failures in a row, so a queue where nothing plays is not cycled through forever. A track that
- *   starts playing ([onPlaying]) clears the count.
+ *   really plays ([onPlaying]) clears the count: on Android once its position has moved, since the
+ *   crossfade adapter reports "playing" for a track with no source as well.
  *
  * Not thread-safe: call it from the thread the player reports on.
  */
