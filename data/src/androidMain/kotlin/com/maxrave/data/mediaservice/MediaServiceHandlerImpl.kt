@@ -2716,6 +2716,12 @@ internal class MediaServiceHandlerImpl(
         if (mediaItem?.mediaId != _nowPlaying.value?.mediaId) {
             _nowPlaying.value = mediaItem
         }
+        // A crossfade into a precached track sends no Ready of its own (that player was ready long
+        // before), so its length (what player.duration reports mid-fade) goes to the seek bar here;
+        // it used to show the outgoing track's length until the fade ended.
+        if (controlState.value.isCrossfading && player.duration > 0) {
+            _simpleMediaState.value = SimpleMediaState.Ready(player.duration)
+        }
         if (mediaItem?.mediaId != nowPlayingState.value.mediaItem.mediaId) {
             Logger.d(TAG, "onMediaItemTransition: ${mediaItem?.mediaId}")
             if (mediaItem != null) {

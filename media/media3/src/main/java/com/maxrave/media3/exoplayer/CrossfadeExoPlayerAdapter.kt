@@ -1106,7 +1106,9 @@ internal class CrossfadeExoPlayerAdapter(
         get() = cachedPosition
 
     override val duration: Long
-        get() = currentPlayer?.duration ?: cachedDuration
+        // During a crossfade the timeline is the incoming track's, as currentPosition already is: the
+        // seek bar used to show the new track's position against the old track's length.
+        get() = (if (isCrossfading) secondaryPlayer ?: currentPlayer else currentPlayer)?.duration ?: cachedDuration
 
     override val bufferedPosition: Long
         get() = cachedBufferedPosition
