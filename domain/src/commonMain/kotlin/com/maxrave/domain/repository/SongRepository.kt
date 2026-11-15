@@ -25,6 +25,9 @@ interface SongRepository {
 
     fun getDownloadedSongs(): Flow<List<SongEntity>?>
 
+    /** The downloaded songs, read again whenever a song is downloaded or removed. Never completes. */
+    fun observeDownloadedSongs(): Flow<List<SongEntity>>
+
     fun getDownloadingSongs(): Flow<List<SongEntity>?>
 
     fun getPreparingSongs(): Flow<List<SongEntity>>

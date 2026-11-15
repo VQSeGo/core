@@ -466,6 +466,10 @@ interface DatabaseDao {
         offset: Int,
     ): List<SongEntity>
 
+    /** Emits on every write to the song table; callers dedupe, so only a change of the set counts. */
+    @Query("SELECT videoId FROM song WHERE downloadState = 3")
+    fun getDownloadedSongIdsAsFlow(): Flow<List<String>>
+
     @Query("SELECT * FROM song WHERE downloadState = 1 OR downloadState = 2 LIMIT :limit OFFSET :offset")
     suspend fun getDownloadingSongs(
         limit: Int,

@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.firstOrNull
@@ -100,6 +101,17 @@ internal class SongRepositoryImpl(
                 },
             )
         }.flowOn(Dispatchers.IO)
+
+    override fun observeDownloadedSongs(): Flow<List<SongEntity>> =
+        localDataSource
+            .getDownloadedSongIdsAsFlow()
+            .map { it.toSet() }
+            .distinctUntilChanged()
+            .map {
+                getFullDataFromDB { limit, offset ->
+                    localDataSource.getDownloadedSongs(limit, offset)
+                }
+            }.flowOn(Dispatchers.IO)
 
     override fun getDownloadingSongs(): Flow<List<SongEntity>?> =
         flow {
