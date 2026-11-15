@@ -25,7 +25,6 @@ object SpotifyTotp {
     private fun generateSecret(totpSecret: Pair<Int, List<Int>>): String {
 
         val secretCipherBytes = totpSecret.second
-        println("TOTP cipher: $secretCipherBytes")
 
         // Transform bytes: e ^ ((t % 33) + 9) for each byte
         val transformed = secretCipherBytes.mapIndexed { index, byte ->
@@ -40,7 +39,6 @@ object SpotifyTotp {
         val secret = base64ToBase32(Base64.encode(hexStr.hexToByteArray()))
             .trimEnd('=')
 
-        println("Computed secret: $secret")
         return secret
     }
 

@@ -40,10 +40,9 @@ class SpotifyAuth(
         runCatching {
             if (totpSecret == null) {
                 // Fetch the latest TOTP secret if not already fetched
-                getTotpSecret().onSuccess {
-                    println("Fetched TOTP secret successfully: $totpSecret")
-                }.onFailure {
-                    println("Failed to fetch TOTP secret: ${it.message}")
+                // The secret itself stays out of the log.
+                getTotpSecret().onFailure {
+                    Logger.w("SpotifyAuth", "Failed to fetch TOTP secret: ${it.message}")
                 }
             }
             // Get server time from Spotify
@@ -52,11 +51,9 @@ class SpotifyAuth(
             val serverTime =
                 serverTimeJson["serverTime"]?.jsonPrimitive?.longOrNull
                     ?: throw Exception("Failed to get server time")
-            println("Server time: $serverTime")
 
             // Generate TOTP secret and OTP value
             val otpValue = SpotifyTotp.at(serverTime * 1000L, totpSecret ?: SpotifyTotp.TOTP_SECRET_V22)
-            println("Generated OTP: $otpValue")
 
             val sTime = "$serverTime"
             val cTime = "$serverTime"
