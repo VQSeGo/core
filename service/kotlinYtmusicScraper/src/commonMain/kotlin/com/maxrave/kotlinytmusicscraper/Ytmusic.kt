@@ -24,6 +24,8 @@ import com.maxrave.kotlinytmusicscraper.models.body.NextBody
 import com.maxrave.kotlinytmusicscraper.models.body.PlayerBody
 import com.maxrave.kotlinytmusicscraper.models.body.SearchBody
 import com.maxrave.kotlinytmusicscraper.models.response.DownloadProgress
+import com.maxrave.kotlinytmusicscraper.utils.NetworkGate
+import com.maxrave.kotlinytmusicscraper.utils.isNoNetwork
 import com.maxrave.kotlinytmusicscraper.utils.parseCookieString
 import com.maxrave.kotlinytmusicscraper.utils.sha1
 import com.maxrave.ktorext.curl.CurlLogger
@@ -1189,13 +1191,24 @@ class Ytmusic {
     }
 
     suspend fun is403Url(url: String): Boolean {
+        // No network a moment ago: no wait for the check, the resolution that follows fails at once too.
+        if (NetworkGate.isLost()) return true
         return try {
             return httpClient
                 .head(url) {
                     timeout { requestTimeoutMillis = 3_000 }
                 }.status.value in 400..499
         } catch (e: Exception) {
-            Logger.e("Ytmusic", "is403Url failed: ${e.message}", e)
+            if (isNoNetwork(e)) {
+                // Not a refusal: there is no network, which the next request will find out for itself.
+                NetworkGate.markLost()
+                Logger.w("Ytmusic", "is403Url: no network (${e::class.simpleName})")
+            } else if (e::class.simpleName?.contains("Timeout") == true) {
+                // The 3 s limit running out says the link is slow, not that the URL is refused.
+                Logger.w("Ytmusic", "is403Url: no answer in time (${e::class.simpleName})")
+            } else {
+                Logger.e("Ytmusic", "is403Url failed: ${e.message}", e)
+            }
             true
         }
     }

@@ -2,6 +2,8 @@ package com.maxrave.kotlinytmusicscraper.extractor
 
 import com.maxrave.kotlinytmusicscraper.models.SongItem
 import com.maxrave.kotlinytmusicscraper.models.response.DownloadProgress
+import com.maxrave.kotlinytmusicscraper.utils.NoNetworkException
+import com.maxrave.kotlinytmusicscraper.utils.isNoNetwork
 import com.maxrave.logger.Logger
 import dev.maxrave.pipepipe.extractor.NewPipe
 import dev.maxrave.pipepipe.extractor.ServiceList
@@ -164,6 +166,7 @@ actual class Extractor {
             StreamInfo.getInfo(ServiceList.YouTube, "https://music.youtube.com/watch?v=$videoId").hlsUrl
         }.onFailure {
             Logger.w(TAG, "PipePipe[$tier] live extraction failed for $videoId: ${it.message}")
+            if (isNoNetwork(it)) throw NoNetworkException(it)
         }.getOrNull()
             ?.takeIf { it.isNotEmpty() }
             ?.also {
@@ -176,6 +179,7 @@ actual class Extractor {
             BraveStreamInfo.getInfo(BraveServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId").hlsUrl
         }.onFailure {
             Logger.w(TAG, "BravePipe live extraction failed for $videoId: ${it.message}")
+            if (isNoNetwork(it)) throw NoNetworkException(it)
         }.getOrNull()
             ?.takeIf { it.isNotEmpty() }
             ?.also {
@@ -222,8 +226,13 @@ actual class Extractor {
             ExtractSource.record(videoId, "PipePipe · $label")
             Logger.d(TAG, "extract source=PipePipe[$tier] itags=${pipeResult.map { it.first }} for $videoId")
             return pipeResult
+        } catch (e: NoNetworkException) {
+            throw e
         } catch (e: Throwable) {
             Logger.w(TAG, "PipePipe[$tier] extractor failed for $videoId: ${e.message}")
+            // No network ends the resolution: the tiers below fail the same way, and where packets
+            // vanish each of them would wait out its own connect timeout.
+            if (isNoNetwork(e)) throw NoNetworkException(e)
             return null
         }
     }
@@ -246,7 +255,10 @@ actual class Extractor {
             temp.toList()
         }.onFailure {
             Logger.w(TAG, "BravePipe extractor failed for $videoId: ${it.message}")
-        }.getOrElse { emptyList() }
+        }.getOrElse {
+            if (isNoNetwork(it)) throw NoNetworkException(it)
+            emptyList()
+        }
 
     actual fun mergeAudioVideoDownload(filePath: String): DownloadProgress = DownloadProgress.failed("Not supported on JVM")
 

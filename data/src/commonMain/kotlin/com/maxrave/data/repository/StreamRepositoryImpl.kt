@@ -18,6 +18,7 @@ import com.maxrave.domain.utils.Resource
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.kotlinytmusicscraper.models.MediaType
 import com.maxrave.kotlinytmusicscraper.models.response.PlayerResponse
+import com.maxrave.kotlinytmusicscraper.utils.NoNetworkException
 import com.maxrave.logger.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -343,8 +344,13 @@ internal class StreamRepositoryImpl(
                         )
                     }
                 }.onFailure {
-                    Logger.e("StreamRepositoryImpl", "getStream failed: ${it.message}", it)
-                    Logger.e("Stream", "Error: ${it.message}")
+                    if (it is NoNetworkException) {
+                        // One line, no trace: every layer below stopped at the first sign of it.
+                        Logger.w("Stream", "$videoId: no network")
+                    } else {
+                        Logger.e("StreamRepositoryImpl", "getStream failed: ${it.message}", it)
+                        Logger.e("Stream", "Error: ${it.message}")
+                    }
                     emit(null)
                 }
         }.flowOn(Dispatchers.IO)

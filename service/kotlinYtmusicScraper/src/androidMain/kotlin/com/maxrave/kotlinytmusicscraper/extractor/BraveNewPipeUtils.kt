@@ -2,6 +2,8 @@ package com.maxrave.kotlinytmusicscraper.extractor
 
 import com.maxrave.common.ITAG
 import com.maxrave.kotlinytmusicscraper.models.YouTubeClient
+import com.maxrave.kotlinytmusicscraper.utils.NoNetworkException
+import com.maxrave.kotlinytmusicscraper.utils.isNoNetwork
 import com.maxrave.logger.Logger
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -46,6 +48,9 @@ internal fun List<Pair<Int, String>>.headCheckRandomStream(): Boolean {
         }
     }.onFailure {
         Logger.i("Offline", "head itag=${candidate.first} failed: ${it::class.simpleName} ${it.message}")
+        // Not a rejected URL: the network went away between the extraction and this check. Saying so
+        // keeps the caller from judging the decoder (and the next tiers) on a dead link.
+        if (isNoNetwork(it)) throw NoNetworkException(it)
     }.getOrDefault(false)
 }
 

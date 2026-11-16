@@ -90,6 +90,10 @@ import com.maxrave.kotlinytmusicscraper.parser.nextPage
 import com.maxrave.kotlinytmusicscraper.parser.playlistContinuationContents
 import com.maxrave.kotlinytmusicscraper.parser.subscriptions
 import com.maxrave.kotlinytmusicscraper.parser.toSongItem
+import com.maxrave.kotlinytmusicscraper.utils.NetworkGate
+import com.maxrave.kotlinytmusicscraper.utils.NoNetworkException
+import com.maxrave.kotlinytmusicscraper.utils.isNoAnswer
+import com.maxrave.kotlinytmusicscraper.utils.isNoNetwork
 import com.maxrave.logger.Logger
 import com.mohamedrejeb.ksoup.html.parser.KsoupHtmlHandler
 import com.mohamedrejeb.ksoup.html.parser.KsoupHtmlParser
@@ -1494,12 +1498,26 @@ class YouTube {
                 ),
         )
 
-    @OptIn(ExperimentalTime::class)
     suspend fun player(
         videoId: String,
         playlistId: String? = null,
         noLogIn: Boolean = false,
         preferredAudioLanguage: String? = null,
+    ): Result<Triple<String?, PlayerResponse, MediaType>> {
+        // No network a moment ago: the answer is the same, so no timeout is waited out for it again.
+        if (NetworkGate.isLost()) {
+            Logger.i("Offline", "resolve $videoId no network (recent)")
+            return Result.failure(NoNetworkException())
+        }
+        return resolvePlayer(videoId, playlistId, noLogIn, preferredAudioLanguage)
+    }
+
+    @OptIn(ExperimentalTime::class)
+    private suspend fun resolvePlayer(
+        videoId: String,
+        playlistId: String?,
+        noLogIn: Boolean,
+        preferredAudioLanguage: String?,
     ): Result<Triple<String?, PlayerResponse, MediaType>> =
         runCatching {
             val cpn =
@@ -1534,6 +1552,7 @@ class YouTube {
                             },
                     ).body<PlayerResponse>()
                     .also {
+                        NetworkGate.markReachable()
                         Logger.i(
                             "Offline",
                             "resolve $videoId innertube ${playerStarted.elapsedNow().inWholeMilliseconds} " +
@@ -1629,6 +1648,11 @@ class YouTube {
                 ),
                 thumbnails,
             )
+        }.recoverCatching {
+            // One plain answer for a lost network, from the first request or from any extractor tier:
+            // callers tell it from a bad answer (403, no URL) by the type, not by a host name in a message.
+            if (isNoAnswer(it)) NetworkGate.markLost()
+            throw if (isNoNetwork(it) && it !is NoNetworkException) NoNetworkException(it) else it
         }
 
     suspend fun updateWatchTime(
