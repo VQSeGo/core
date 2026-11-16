@@ -9,6 +9,7 @@ import android.media.audiofx.AudioEffect
 import android.media.audiofx.LoudnessEnhancer
 import com.maxrave.common.ASC
 import com.maxrave.common.CUSTOM_ORDER
+import com.maxrave.common.Config
 import com.maxrave.common.Config.ALBUM_CLICK
 import com.maxrave.common.Config.PLAYLIST_CLICK
 import com.maxrave.common.Config.RADIO_CLICK
@@ -580,6 +581,7 @@ internal class MediaServiceHandlerImpl(
             )
         }
         _format.value = null
+        trackPlayedRecorded = false
         // Both subscriptions are swapped here, before the job below writes the song table: the
         // previous track's subscription used to stay alive until the end of that job, so every one
         // of its writes made it emit its own row (and its liked flag) over the track that had just
@@ -655,10 +657,8 @@ internal class MediaServiceHandlerImpl(
                                 }
                             }
                         }
-                        songRepository.updateSongInLibrary(now(), songEntity.videoId).singleOrNull().let {
-                            Logger.d(TAG, "getDataOfNowPlayingState: $it")
-                        }
-                        songRepository.updateListenCount(songEntity.videoId)
+                        // "Recently added" and the listen count wait for [recordTrackPlayed]: a track that
+                        // is only landed on and skipped (no stream, blocked in the region) is not a listen.
                         _nowPlayingState.update {
                             it.copy(
                                 songEntity =
@@ -679,9 +679,10 @@ internal class MediaServiceHandlerImpl(
                             (track?.toSongEntity() ?: mediaItem.toSongEntity()).copy(
                                 thumbnails = thumbUrl,
                             )
+                        // A new row stays out of "Recently added" until the track really plays.
                         songRepository
                             .insertSong(
-                                songEntity,
+                                songEntity.copy(inLibrary = Config.REMOVED_SONG_DATE_TIME),
                             ).singleOrNull()
                             ?.let {
                                 Logger.d(TAG, "getDataOfNowPlayingState: $it")
@@ -698,6 +699,25 @@ internal class MediaServiceHandlerImpl(
                     getFormat(videoId)
                 }
             }
+    }
+
+    /** Set once the current track has been counted as played; cleared when a new track is landed on. */
+    private var trackPlayedRecorded = false
+
+    /**
+     * Called once the playhead has really moved: only now does the track count as a listen (listen
+     * count, "Recently added"). Landing on a track and skipping it as unplayable must not.
+     */
+    private fun recordTrackPlayed() {
+        if (trackPlayedRecorded) return
+        val mediaItem = nowPlayingState.value.mediaItem
+        val videoId = if (mediaItem.isVideo()) mediaItem.mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO) else mediaItem.mediaId
+        if (videoId.isBlank()) return
+        trackPlayedRecorded = true
+        coroutineScope.launch {
+            songRepository.updateSongInLibrary(now(), videoId).singleOrNull()
+            songRepository.updateListenCount(videoId)
+        }
     }
 
     private fun getFormat(mediaId: String?) {
@@ -914,12 +934,25 @@ internal class MediaServiceHandlerImpl(
                 var sinceLastPositionSaveMs = 0L
                 val startPosition = player.currentPosition
                 var playingConfirmed = false
+                var playedBaselineId: String? = null
+                var playedBaseline = 0L
                 while (true) {
                     delay(tickIntervalMs)
                     _simpleMediaState.value = SimpleMediaState.Progress(player.currentPosition)
                     if (!playingConfirmed && player.currentPosition - startPosition >= PLAYING_CONFIRMED_MS) {
                         playingConfirmed = true
                         unplayableTrackSkipper.onPlaying()
+                    }
+                    if (!trackPlayedRecorded) {
+                        // Per track, not per loop: a gapless transition does not restart this loop.
+                        val position = player.currentPosition
+                        val id = nowPlayingState.value.mediaItem.mediaId
+                        if (id != playedBaselineId || position < playedBaseline) {
+                            playedBaselineId = id
+                            playedBaseline = position
+                        } else if (position - playedBaseline >= PLAYING_CONFIRMED_MS) {
+                            recordTrackPlayed()
+                        }
                     }
                     sinceLastPositionSaveMs += tickIntervalMs
                     if (sinceLastPositionSaveMs >= positionPersistIntervalMs) {

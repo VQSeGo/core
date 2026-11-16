@@ -2,6 +2,7 @@ package com.maxrave.data.mediaservice
 
 import com.maxrave.common.ASC
 import com.maxrave.common.CUSTOM_ORDER
+import com.maxrave.common.Config
 import com.maxrave.common.Config.ALBUM_CLICK
 import com.maxrave.common.Config.PLAYLIST_CLICK
 import com.maxrave.common.Config.RADIO_CLICK
@@ -126,6 +127,9 @@ private const val SMOOTH_MAX_LEAD_MS = 600L
 // A jump wider than this is a seek or a track change, not the staircase — take the real value
 // immediately instead of easing towards it.
 private const val SMOOTH_SNAP_MS = 1_000L
+
+/** How far the position must move before a track counts as played ([recordTrackPlayed]). */
+private const val PLAYING_CONFIRMED_MS = 1_000L
 
 // Position tick while no window is on screen (AppOnScreen). Nothing draws the position then, and a
 // minimized window still renders on Windows and Linux, so 50 ms ticks were 20 frames a second of
@@ -653,6 +657,7 @@ class JvmMediaPlayerHandlerImpl(
             )
         }
         _format.value = null
+        trackPlayedRecorded = false
         // Cancelled here, not further down: the writes below touch the song table, which makes the
         // previous track's subscription emit its own row over the track that just started. The
         // format subscription likewise re-emits when the new track's stream is written.
@@ -694,10 +699,9 @@ class JvmMediaPlayerHandlerImpl(
                                     }
                                 }
                             }
-                            songRepository.updateSongInLibrary(now(), songEntity.videoId).singleOrNull().let {
-                                Logger.d(TAG, "getDataOfNowPlayingState: $it")
-                            }
-                            songRepository.updateListenCount(songEntity.videoId)
+                            // "Recently added" and the listen count wait for [recordTrackPlayed]: a track
+                            // that is only landed on and skipped (no stream, blocked in the region)
+                            // is not a listen.
                             songEntity.copy(thumbnails = thumbUrl)
                         } else {
                             _controlState.update { it.copy(isLiked = false) }
@@ -711,8 +715,9 @@ class JvmMediaPlayerHandlerImpl(
                                 (track?.toSongEntity() ?: mediaItem.toSongEntity()).copy(
                                     thumbnails = thumbUrl,
                                 )
+                            // A new row stays out of "Recently added" until the track really plays.
                             songRepository
-                                .insertSong(newSong)
+                                .insertSong(newSong.copy(inLibrary = Config.REMOVED_SONG_DATE_TIME))
                                 .singleOrNull()
                                 ?.let {
                                     Logger.d(TAG, "getDataOfNowPlayingState: $it")
@@ -776,6 +781,25 @@ class JvmMediaPlayerHandlerImpl(
                     getFormat(videoId)
                 }
             }
+    }
+
+    /** Set once the current track has been counted as played; cleared when a new track is landed on. */
+    private var trackPlayedRecorded = false
+
+    /**
+     * Called once the playhead has really moved: only now does the track count as a listen (listen
+     * count, "Recently added"). Landing on a track and skipping it as unplayable must not.
+     */
+    private fun recordTrackPlayed() {
+        if (trackPlayedRecorded) return
+        val mediaItem = nowPlayingState.value.mediaItem
+        val videoId = if (mediaItem.isVideo()) mediaItem.mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO) else mediaItem.mediaId
+        if (videoId.isBlank()) return
+        trackPlayedRecorded = true
+        coroutineScope.launch {
+            songRepository.updateSongInLibrary(now(), videoId).singleOrNull()
+            songRepository.updateListenCount(videoId)
+        }
     }
 
     private fun getFormat(mediaId: String?) {
@@ -977,11 +1001,24 @@ class JvmMediaPlayerHandlerImpl(
                 // twice as many even steps reads better than half as many.
                 val tickIntervalMs = 50L
                 var sinceLastPositionSaveMs = 0L
+                var playedBaselineId: String? = null
+                var playedBaseline = 0L
                 while (true) {
                     val intervalMs = if (AppOnScreen.onScreen.value) tickIntervalMs else OFF_SCREEN_TICK_MS
                     delay(intervalMs.milliseconds)
                     _simpleMediaState.value = SimpleMediaState.Progress(smoothedPosition(player.currentPosition))
                     updateMacOSElapsedTime()
+                    if (!trackPlayedRecorded) {
+                        // Per track, not per loop: a gapless transition does not restart this loop.
+                        val position = player.currentPosition
+                        val id = nowPlayingState.value.mediaItem.mediaId
+                        if (id != playedBaselineId || position < playedBaseline) {
+                            playedBaselineId = id
+                            playedBaseline = position
+                        } else if (position - playedBaseline >= PLAYING_CONFIRMED_MS) {
+                            recordTrackPlayed()
+                        }
+                    }
                     sinceLastPositionSaveMs += intervalMs
                     if (sinceLastPositionSaveMs >= positionPersistIntervalMs) {
                         sinceLastPositionSaveMs = 0
