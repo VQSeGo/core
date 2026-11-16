@@ -111,6 +111,34 @@ internal class PlaylistRepositoryImpl(
         )
     }
 
+    override suspend fun refreshPlaylistContent(
+        fresh: PlaylistEntity,
+        replaceTracks: Boolean,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val saved = localDataSource.getPlaylist(fresh.id) ?: return@withContext false
+            // A first page shorter than the saved list is a cut of it (paged through for a download):
+            // keep the saved one. A page as long as the saved list or longer loses nothing.
+            val freshTracks =
+                fresh.tracks?.takeIf {
+                    it.isNotEmpty() && (replaceTracks || it.size >= (saved.tracks?.size ?: 0))
+                }
+            val same =
+                saved.title == fresh.title &&
+                    saved.author == fresh.author &&
+                    saved.description == fresh.description &&
+                    saved.duration == fresh.duration &&
+                    saved.durationSeconds == fresh.durationSeconds &&
+                    saved.privacy == fresh.privacy &&
+                    (fresh.thumbnails.isEmpty() || saved.thumbnails == fresh.thumbnails) &&
+                    saved.trackCount == fresh.trackCount &&
+                    saved.year == fresh.year &&
+                    (freshTracks == null || saved.tracks == freshTracks)
+            if (same) return@withContext false
+            localDataSource.updatePlaylistContent(fresh, freshTracks)
+            true
+        }
+
     override suspend fun updatePlaylistDownloadState(
         playlistId: String,
         downloadState: Int,

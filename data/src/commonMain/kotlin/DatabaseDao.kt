@@ -555,6 +555,33 @@ interface DatabaseDao {
         browseId: String,
     )
 
+    /**
+     * Writes what the network says about an album onto its saved row. Only the content columns:
+     * liked, favoriteAt, inLibrary, downloadState and downloadedAt belong to this device and stay.
+     * An empty cover keeps the saved one.
+     */
+    @Query(
+        "UPDATE album SET artistId = :artistId, artistName = :artistName, audioPlaylistId = :audioPlaylistId, " +
+            "description = :description, duration = :duration, durationSeconds = :durationSeconds, " +
+            "thumbnails = COALESCE(NULLIF(:thumbnails, ''), thumbnails), title = :title, trackCount = :trackCount, " +
+            "tracks = :tracks, type = :type, year = :year WHERE browseId = :browseId",
+    )
+    suspend fun updateAlbumContent(
+        browseId: String,
+        artistId: List<String?>?,
+        artistName: List<String>?,
+        audioPlaylistId: String,
+        description: String,
+        duration: String?,
+        durationSeconds: Int,
+        thumbnails: String?,
+        title: String,
+        trackCount: Int,
+        tracks: List<String>?,
+        type: String,
+        year: String?,
+    )
+
     @Query("UPDATE album SET downloadState = :downloadState, downloadedAt = :downloadedAt WHERE browseId = :browseId")
     suspend fun updateAlbumDownloadState(
         downloadState: Int,
@@ -607,6 +634,38 @@ interface DatabaseDao {
     suspend fun updatePlaylistInLibrary(
         inLibrary: LocalDateTime,
         playlistId: String,
+    )
+
+    /**
+     * Writes what the network says about a playlist onto its saved row, without the columns that
+     * belong to this device (liked, favoriteAt, inLibrary, downloadState, downloadedAt) and without
+     * the track list ([updatePlaylistTracks]). An empty cover keeps the saved one.
+     */
+    @Query(
+        "UPDATE playlist SET author = :author, description = :description, duration = :duration, " +
+            "durationSeconds = :durationSeconds, privacy = :privacy, " +
+            "thumbnails = COALESCE(NULLIF(:thumbnails, ''), thumbnails), title = :title, trackCount = :trackCount, " +
+            "year = :year WHERE id = :playlistId",
+    )
+    suspend fun updatePlaylistContent(
+        playlistId: String,
+        author: String?,
+        description: String,
+        duration: String,
+        durationSeconds: Int,
+        privacy: String,
+        thumbnails: String,
+        title: String,
+        trackCount: Int,
+        year: String?,
+    )
+
+    // The list stays out of any SQL function: a list parameter inside COALESCE(...) is expanded by
+    // Room into one placeholder per element instead of being stored as one converted value.
+    @Query("UPDATE playlist SET tracks = :tracks WHERE id = :playlistId")
+    suspend fun updatePlaylistTracks(
+        playlistId: String,
+        tracks: List<String>?,
     )
 
     @Query("UPDATE playlist SET downloadState = :downloadState, downloadedAt = :downloadedAt WHERE id = :playlistId")

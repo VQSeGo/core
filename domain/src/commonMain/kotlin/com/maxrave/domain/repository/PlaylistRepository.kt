@@ -35,6 +35,19 @@ interface PlaylistRepository {
         playlistId: String,
     )
 
+    /**
+     * Brings the saved row of [fresh] up to what the network says: title, author, cover, description,
+     * track count and year. Liked, library date and download state stay as they are. The saved track
+     * list is replaced when [replaceTracks] (the network sent the whole playlist) or when the
+     * network's list is at least as long as the saved one; a first page shorter than the saved list
+     * leaves it alone. Returns whether anything differed (nothing is written when it did not). A missing row
+     * is not created.
+     */
+    suspend fun refreshPlaylistContent(
+        fresh: PlaylistEntity,
+        replaceTracks: Boolean,
+    ): Boolean
+
     suspend fun updatePlaylistDownloadState(
         playlistId: String,
         downloadState: Int,

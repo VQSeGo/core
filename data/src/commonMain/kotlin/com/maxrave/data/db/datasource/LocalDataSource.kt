@@ -343,6 +343,41 @@ internal class LocalDataSource(
         albumId: String,
     ) = databaseDao.updateAlbumInLibrary(inLibrary, albumId)
 
+    suspend fun updateAlbumContent(album: AlbumEntity) =
+        databaseDao.updateAlbumContent(
+            browseId = album.browseId,
+            artistId = album.artistId,
+            artistName = album.artistName,
+            audioPlaylistId = album.audioPlaylistId,
+            description = album.description,
+            duration = album.duration,
+            durationSeconds = album.durationSeconds,
+            thumbnails = album.thumbnails,
+            title = album.title,
+            trackCount = album.trackCount,
+            tracks = album.tracks,
+            type = album.type,
+            year = album.year,
+        )
+
+    suspend fun updatePlaylistContent(
+        playlist: PlaylistEntity,
+        tracks: List<String>?,
+    ) = databaseDao.updatePlaylistContent(
+        playlistId = playlist.id,
+        author = playlist.author,
+        description = playlist.description,
+        duration = playlist.duration,
+        durationSeconds = playlist.durationSeconds,
+        privacy = playlist.privacy,
+        thumbnails = playlist.thumbnails,
+        title = playlist.title,
+        trackCount = playlist.trackCount,
+        year = playlist.year,
+    ).also {
+        if (tracks != null) databaseDao.updatePlaylistTracks(playlist.id, tracks)
+    }
+
     suspend fun updateAlbumDownloadState(
         downloadState: Int,
         albumId: String,

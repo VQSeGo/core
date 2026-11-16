@@ -28,6 +28,13 @@ interface AlbumRepository {
         albumId: String,
     )
 
+    /**
+     * Brings the saved row of [fresh] up to what the network says: title, cover, year, artists, track
+     * list and the like. Liked, library date and download state stay as they are. Returns whether
+     * anything differed (nothing is written when it did not). A missing row is not created.
+     */
+    suspend fun refreshAlbumContent(fresh: AlbumEntity): Boolean
+
     suspend fun updateAlbumDownloadState(
         albumId: String,
         downloadState: Int,

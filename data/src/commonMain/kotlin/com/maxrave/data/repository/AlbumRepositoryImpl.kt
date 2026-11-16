@@ -66,6 +66,30 @@ internal class AlbumRepositoryImpl(
         Dispatchers.Main,
     ) { localDataSource.updateAlbumInLibrary(inLibrary, albumId) }
 
+    override suspend fun refreshAlbumContent(fresh: AlbumEntity): Boolean =
+        withContext(Dispatchers.IO) {
+            val saved = localDataSource.getAlbum(fresh.browseId) ?: return@withContext false
+            val freshTracks = fresh.tracks
+            // An answer without tracks is no reason to empty a saved album.
+            if (freshTracks.isNullOrEmpty()) return@withContext false
+            val same =
+                saved.title == fresh.title &&
+                    saved.artistId == fresh.artistId &&
+                    saved.artistName == fresh.artistName &&
+                    saved.audioPlaylistId == fresh.audioPlaylistId &&
+                    saved.description == fresh.description &&
+                    saved.duration == fresh.duration &&
+                    saved.durationSeconds == fresh.durationSeconds &&
+                    (fresh.thumbnails.isNullOrEmpty() || saved.thumbnails == fresh.thumbnails) &&
+                    saved.trackCount == fresh.trackCount &&
+                    saved.tracks == freshTracks &&
+                    saved.type == fresh.type &&
+                    saved.year == fresh.year
+            if (same) return@withContext false
+            localDataSource.updateAlbumContent(fresh)
+            true
+        }
+
     override suspend fun updateAlbumDownloadState(
         albumId: String,
         downloadState: Int,
