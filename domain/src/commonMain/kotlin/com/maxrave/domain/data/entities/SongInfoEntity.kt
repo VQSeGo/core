@@ -11,8 +11,8 @@ data class SongInfoEntity(
     val authorThumbnail: String? = null,
     val description: String? = null,
     val subscribers: String? = null,
-    val viewCount: Int? = null,
+    val viewCount: Long? = null,
     val uploadDate: String? = null,
-    val like: Int? = null,
-    val dislike: Int? = null,
+    val like: Long? = null,
+    val dislike: Long? = null,
 )

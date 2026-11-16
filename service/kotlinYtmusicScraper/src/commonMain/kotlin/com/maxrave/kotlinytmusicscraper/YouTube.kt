@@ -1206,8 +1206,17 @@ class YouTube {
                     ?.find {
                         it?.videoPrimaryInfoRenderer != null
                     }?.videoPrimaryInfoRenderer
+            // The vote counts are a bonus: when the third-party API is down, rate-limited or answers something
+            // unexpected, keep the author and description from YouTube and just leave the counts empty.
             val returnYouTubeDislikeResponse =
-                ytMusic.returnYouTubeDislike(videoId).body<ReturnYouTubeDislikeResponse>()
+                try {
+                    ytMusic.returnYouTubeDislike(videoId).body<ReturnYouTubeDislikeResponse>()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Logger.w("YouTube", "ReturnYouTubeDislike unavailable for $videoId: ${e::class.simpleName}: ${e.message?.take(120)}")
+                    null
+                }
             return@runCatching SongInfo(
                 videoId = videoId,
                 author =
@@ -1240,9 +1249,9 @@ class YouTube {
                         ?.subscriberCountText
                         ?.simpleText,
                 uploadDate = videoPrimary?.dateText?.simpleText,
-                viewCount = returnYouTubeDislikeResponse.viewCount,
-                like = returnYouTubeDislikeResponse.likes,
-                dislike = returnYouTubeDislikeResponse.dislikes,
+                viewCount = returnYouTubeDislikeResponse?.viewCount,
+                like = returnYouTubeDislikeResponse?.likes,
+                dislike = returnYouTubeDislikeResponse?.dislikes,
             )
             // Get author thumbnails, subscribers, description, like count
         }

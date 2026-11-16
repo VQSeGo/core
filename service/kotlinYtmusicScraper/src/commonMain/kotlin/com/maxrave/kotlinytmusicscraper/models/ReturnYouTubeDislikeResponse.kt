@@ -6,10 +6,10 @@ import kotlinx.serialization.Serializable
 data class ReturnYouTubeDislikeResponse(
     val id: String? = null,
     val dateCreated: String? = null,
-    val likes: Int? = null,
-    val dislikes: Int? = null,
+    val likes: Long? = null,
+    val dislikes: Long? = null,
     val rating: Double? = null,
-    val viewCount: Int? = null,
+    val viewCount: Long? = null,
     val deleted: Boolean? = null,
 )
 //  "id": "WPb2j3GU8Kc",
