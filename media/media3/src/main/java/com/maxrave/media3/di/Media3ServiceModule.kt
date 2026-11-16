@@ -605,11 +605,14 @@ private fun provideHttpDataSourceFactory(
 
 /**
  * Request and response headers of every audio request, while "Debug logging" is on (asked per request,
- * so the setting applies without rebuilding the player). Credential headers are masked either way.
+ * so the setting applies without rebuilding the player). Credential headers are masked either way, and
+ * the lines pass [Logger], which masks a stream link's signature, tokens and `ip=`.
  */
 private fun audioLoggingInterceptor(): Interceptor {
     val headers =
-        HttpLoggingInterceptor().apply {
+        // Through Logger, not OkHttp's own logcat writer: Logger.redact masks the stream link's signature,
+        // tokens and the address it was cut for (`ip=`), which the request line carries whole.
+        HttpLoggingInterceptor { message -> Logger.d("OkHttp", message) }.apply {
             level = HttpLoggingInterceptor.Level.HEADERS
             LogRedaction.SECRET_HEADERS.forEach { redactHeader(it) }
         }

@@ -22,7 +22,7 @@ class CurlLoggerConfig {
      * Sink for the built curl command. Defaults to [println]; each service overrides this
      * with its own logger, e.g. `logger = { Logger.d(TAG, it) }`.
      */
-    var logger: (String) -> Unit = { println(it) }
+    var logger: (String) -> Unit = { println(LogRedaction.redact(it)) }
 
     /**
      * Header names (case-insensitive) whose value is replaced with `***`. The account's cookie and
