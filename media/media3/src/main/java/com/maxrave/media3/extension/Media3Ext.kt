@@ -17,6 +17,7 @@ import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.player.GenericCommandButton
 import com.maxrave.domain.mediaservice.handler.RepeatState
 import com.maxrave.domain.utils.connectArtists
+import com.maxrave.domain.utils.isSongMedia
 import com.maxrave.domain.utils.toListName
 import com.maxrave.media3.R
 
@@ -49,7 +50,7 @@ fun MediaItem?.toSongEntity(): SongEntity? =
 @JvmName("MediaItemtoSongEntity")
 @UnstableApi
 fun SongEntity.toMediaItem(): MediaItem {
-    val isSong = (this.thumbnails?.contains("w544") == true && this.thumbnails?.contains("h544") == true)
+    val isSong = this.isSongMedia()
     return MediaItem
         .Builder()
         .setMediaId(this.videoId)

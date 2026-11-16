@@ -1,6 +1,8 @@
 package com.maxrave.domain.utils
 
 import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint.WatchEndpointMusicSupportedConfigs.WatchEndpointMusicConfig.Companion.MUSIC_VIDEO_TYPE_ATV
+import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint.WatchEndpointMusicSupportedConfigs.WatchEndpointMusicConfig.Companion.MUSIC_VIDEO_TYPE_OMV
+import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint.WatchEndpointMusicSupportedConfigs.WatchEndpointMusicConfig.Companion.MUSIC_VIDEO_TYPE_UGC
 
 /**
  * YouTube says what a track actually is in exactly one place —
@@ -33,6 +35,17 @@ object MusicVideoType {
 
     /** True only when YouTube explicitly said this is the audio version. */
     fun isAudio(musicVideoType: String?): Boolean = normalize(musicVideoType) == MUSIC_VIDEO_TYPE_ATV
+
+    /**
+     * True when YouTube says this is a real clip: an official music video or an uploaded video. Narrower
+     * than [isVideoSong]: the other types (official source music, private uploads, podcast episodes) are
+     * audio with a square cover and are not played as video.
+     *
+     * Use it to decide song-or-clip when the type is known; the cover shape is no answer, because a clip
+     * listed in a playlist or an album carries a square thumbnail there.
+     */
+    fun isClip(musicVideoType: String?): Boolean =
+        normalize(musicVideoType).let { it == MUSIC_VIDEO_TYPE_OMV || it == MUSIC_VIDEO_TYPE_UGC }
 
     /** Whether YouTube reported a type at all. */
     fun isKnown(musicVideoType: String?): Boolean = normalize(musicVideoType) != null

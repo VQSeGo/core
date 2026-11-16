@@ -143,6 +143,18 @@ fun Track.toSongEntity(): SongEntity {
     )
 }
 
+/**
+ * Song or clip for playback of a stored row. The type YouTube gave decides when the row has one: a clip
+ * listed in a playlist has a square thumbnail there, which is rewritten to `w544-h544` and would pass for
+ * a song. Rows without a real type fall back to the cover shape.
+ */
+fun SongEntity.isSongMedia(): Boolean =
+    if (MusicVideoType.isKnown(videoType)) {
+        !MusicVideoType.isClip(videoType)
+    } else {
+        thumbnails?.contains("w544") == true && thumbnails?.contains("h544") == true
+    }
+
 fun SongEntity.toTrack(): Track {
     val listArtist = mutableListOf<Artist>()
     val artistName = this.artistName
@@ -151,7 +163,7 @@ fun SongEntity.toTrack(): Track {
             listArtist.add(Artist(this.artistId?.get(i) ?: "", artistName[i]))
         }
     }
-    val isSong = (this.thumbnails?.contains("w544") == true && this.thumbnails?.contains("h544") == true)
+    val isSong = isSongMedia()
     return Track(
         album = this.albumId?.let { this.albumName?.let { it1 -> Album(it, it1) } },
         artists = listArtist,

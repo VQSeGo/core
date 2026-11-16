@@ -32,6 +32,7 @@ import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.handler.downloadNotificationsEnabled
 import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
+import com.maxrave.domain.utils.MusicVideoType
 import com.maxrave.domain.utils.isLive
 import com.maxrave.logger.Logger
 import com.maxrave.domain.mediaservice.StreamSpliceGuard
@@ -278,15 +279,21 @@ internal class DownloadUtils(
         }
         var isVideo = false
         if (dataStoreManager.watchVideoInsteadOfPlayingAudio.first() == DataStoreManager.Values.TRUE) {
-            val request =
-                ImageRequest
-                    .Builder(context)
-                    .data(thumbnail)
-                    .diskCachePolicy(CachePolicy.ENABLED)
-                    .build()
-            val imageResult = ImageLoader(context).execute(request)
-            if (imageResult.image?.height != imageResult.image?.width && imageResult.image != null) {
-                isVideo = true
+            val videoType = songRepository.getSongById(videoId).lastOrNull()?.videoType
+            if (MusicVideoType.isKnown(videoType)) {
+                // YouTube's own word: a clip in a playlist has a square cover, so the picture is no answer.
+                isVideo = MusicVideoType.isClip(videoType)
+            } else {
+                val request =
+                    ImageRequest
+                        .Builder(context)
+                        .data(thumbnail)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .build()
+                val imageResult = ImageLoader(context).execute(request)
+                if (imageResult.image?.height != imageResult.image?.width && imageResult.image != null) {
+                    isVideo = true
+                }
             }
         }
         val downloadRequest =
