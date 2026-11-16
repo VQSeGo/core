@@ -13,6 +13,9 @@ import com.maxrave.logger.Logger
  *   Play later tries it again, and a second failure then skips.
  * - Otherwise skip to the next track; from the second failure in a row on, to the nearest following
  *   track that plays from disk ([MediaPlayerInterface.isLocallyPlayable]), or the next one if none.
+ *   "Next" means the way the listener last moved ([onMediaItemTransition]): after Previous the skip
+ *   keeps going backwards, so Back can pass an unavailable track. With nothing left behind it turns
+ *   forward again rather than pausing on a track that cannot play.
  * - Stop (pause) at the end of the queue, under Repeat One, and after [maxConsecutiveFailures]
  *   failures in a row, so a queue where nothing plays is not cycled through forever. A track that
  *   really plays ([onPlaying]) clears the count: on Android once its position has moved, since the
@@ -39,8 +42,53 @@ internal class UnplayableTrackSkipper(
 
     private var failures = 0
 
+    /** The track the player was last on, to tell which way the listener moved. */
+    private var lastMediaId: String? = null
+
+    /** The listener last moved towards the start of the queue. */
+    private var backward = false
+
+    /** Timeline index of a skip this class asked for: it is not the listener navigating. */
+    private var ownTarget: Int? = null
+
     fun onPlaying() {
         failures = 0
+    }
+
+    /**
+     * Remember which way the queue was last moved by the listener (Previous, Next, a track picked in the
+     * queue, the end of a track). The direction is read off the play order rather than off [reason]: both
+     * custom players report every load as "auto", whoever asked for it. A track that is not in the queue
+     * any more (a new queue) resets it.
+     */
+    fun onMediaItemTransition(
+        player: MediaPlayerInterface,
+        reason: Int,
+    ) {
+        val index = player.currentMediaItemIndex
+        val id = player.currentMediaItem?.mediaId
+        val previousId = lastMediaId
+        lastMediaId = id
+        if (ownTarget == index) {
+            ownTarget = null
+            return
+        }
+        if (reason == PlayerConstants.MEDIA_ITEM_TRANSITION_REASON_REPEAT || id == null || id == previousId) return
+        if (previousId == null) return
+        val order = playOrder(player)
+        val position = order.indexOf(index)
+        val previous = order.indexOfFirst { player.getMediaItemAt(it)?.mediaId == previousId }
+        if (position < 0 || previous < 0) {
+            backward = false
+            return
+        }
+        backward =
+            direction(
+                previous = previous,
+                position = position,
+                size = order.size,
+                repeatAll = player.repeatMode == PlayerConstants.REPEAT_MODE_ALL,
+            )
     }
 
     fun onError(player: MediaPlayerInterface): Step {
@@ -56,38 +104,86 @@ internal class UnplayableTrackSkipper(
             } else {
                 nextTarget(player)
             }
+        ownTarget = target
         if (target == null) {
             Logger.i("Offline", "skip $failedId stop failures=$failures")
             // Whatever comes next is the listener's own request (Play, another track): a new run.
             failures = 0
             return Step.Stop
         }
-        Logger.i("Offline", "skip $failedId -> ${player.getMediaItemAt(target)?.mediaId} failures=$failures")
+        Logger.i(
+            "Offline",
+            "skip $failedId -> ${player.getMediaItemAt(target)?.mediaId} failures=$failures backward=$backward",
+        )
         return Step.Skip(target, announce = failures == 1)
     }
 
-    /** Timeline index to go to, in play order (shuffle included); null at the end of the queue. */
-    private fun nextTarget(player: MediaPlayerInterface): Int? {
+    /** Timeline indices in play order (shuffle included). */
+    private fun playOrder(player: MediaPlayerInterface): List<Int> {
         val count = player.mediaItemCount
-        val order =
-            if (player.shuffleModeEnabled) {
-                (0 until count).map { player.getUnshuffledIndex(it) }.filter { it in 0 until count }
-            } else {
-                (0 until count).toList()
-            }
+        return if (player.shuffleModeEnabled) {
+            (0 until count).map { player.getUnshuffledIndex(it) }.filter { it in 0 until count }
+        } else {
+            (0 until count).toList()
+        }
+    }
+
+    /** Timeline index to go to, in the listener's direction; null at the end of the queue. */
+    private fun nextTarget(player: MediaPlayerInterface): Int? {
+        val order = playOrder(player)
         val position = order.indexOf(player.currentMediaItemIndex)
         if (position < 0) return null
-        // One lap at most: the tracks after this one, then (Repeat All) those before it.
-        val following =
-            order.subList(position + 1, order.size) +
-                if (player.repeatMode == PlayerConstants.REPEAT_MODE_ALL) order.subList(0, position) else emptyList()
-        if (following.isEmpty()) return null
+        val repeatAll = player.repeatMode == PlayerConstants.REPEAT_MODE_ALL
+        var candidates = candidates(order, position, backward, repeatAll)
+        if (candidates.isEmpty() && backward) {
+            // Nothing behind: the unavailable track is the first of the queue. Go forward, to the track the
+            // listener came from, instead of pausing here. The direction stays turned until the next move.
+            backward = false
+            candidates = candidates(order, position, false, repeatAll)
+        }
+        if (candidates.isEmpty()) return null
         // A single failure may be one track blocked in the region while the network is fine: take the
         // neighbour, so streamed tracks in between are not skipped. A second failure in a row looks like
         // no network: jump to the nearest track on disk.
-        if (failures < 2) return following.first()
-        return following.firstOrNull { index ->
+        if (failures < 2) return candidates.first()
+        return candidates.firstOrNull { index ->
             player.getMediaItemAt(index)?.mediaId?.let(player::isLocallyPlayable) == true
-        } ?: following.first()
+        } ?: candidates.first()
+    }
+
+    companion object {
+        /**
+         * True when going from play-order position [previous] to [position] is a step back. Under Repeat All
+         * the wrap-around counts the way it was meant: first to last is Previous, last to first is Next.
+         */
+        fun direction(
+            previous: Int,
+            position: Int,
+            size: Int,
+            repeatAll: Boolean,
+        ): Boolean =
+            when {
+                repeatAll && size > 2 && previous == 0 && position == size - 1 -> true
+                repeatAll && size > 2 && previous == size - 1 && position == 0 -> false
+                else -> position < previous
+            }
+
+        /**
+         * Tracks to try, nearest first: one lap at most. Forward: those after [position], then (Repeat All)
+         * those before it. Backward: those before it, last first, then (Repeat All) those after.
+         */
+        fun candidates(
+            order: List<Int>,
+            position: Int,
+            backward: Boolean,
+            repeatAll: Boolean,
+        ): List<Int> =
+            if (backward) {
+                order.subList(0, position).reversed() +
+                    if (repeatAll) order.subList(position + 1, order.size).reversed() else emptyList()
+            } else {
+                order.subList(position + 1, order.size) +
+                    if (repeatAll) order.subList(0, position) else emptyList()
+            }
     }
 }

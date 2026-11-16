@@ -2751,6 +2751,7 @@ internal class MediaServiceHandlerImpl(
         mediaItem: GenericMediaItem?,
         reason: Int,
     ) {
+        unplayableTrackSkipper.onMediaItemTransition(player, reason)
         Logger.d(TAG, "Checking current state before transition ${simpleMediaState.value}")
         val lastPlayed = nowPlayingState.value.songEntity
         val currentState = simpleMediaState.value

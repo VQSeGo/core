@@ -2853,6 +2853,7 @@ class JvmMediaPlayerHandlerImpl(
         mediaItem: GenericMediaItem?,
         reason: Int,
     ) {
+        unplayableTrackSkipper.onMediaItemTransition(player, reason)
         resetPositionSmoothing()
         Logger.d(TAG, "Checking current state before transition ${simpleMediaState.value}")
         val lastPlayed = nowPlayingState.value.songEntity
