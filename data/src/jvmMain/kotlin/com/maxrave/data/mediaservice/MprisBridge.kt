@@ -11,6 +11,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.lang.reflect.InvocationHandler
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Proxy
 
 private const val TAG = "MprisBridge"
 private const val OBJECT_PATH = "/org/mpris/MediaPlayer2"
@@ -29,6 +32,10 @@ private const val POSITION_PUSH_MS = 250L
  *   their target to `onSeek` in microseconds. [startPositionPump] keeps the field within a quarter
  *   of a second of the player while it plays; every pause, seek and track change writes it at once.
  * - `Seeked` is never emitted: [notifySeeked] sends it.
+ * - `SetPosition` drops its `trackId` and hands any number to `onSeek`, exactly as `Seek` does, so a position past
+ *   the end moved to the next track. The exported object is wrapped in a [Proxy] ([guardSetPosition]) that applies
+ *   the spec's rules before JMTC sees the call: a `trackId` other than the current one, a negative position and one
+ *   past the length are ignored. `Seek` (relative) is left alone: past the end it goes on to the next track.
  * - NPYC's `setButtonEnabled` ties `CanPause` to "is playing", so a paused player reported
  *   `CanPause=false`; [updateState] sets both play and pause whenever there is a track.
  *
@@ -47,6 +54,10 @@ internal class MprisBridge private constructor(
 
     @Volatile
     private var durationUs = 0L
+
+    /** Object path of the current `mpris:trackid`; null while there is no track. */
+    @Volatile
+    private var currentTrackPath: String? = null
 
     /** Track changed (or its metadata was rewritten by NPYC, which resets `mpris:trackid`). */
     fun updateTrack(
@@ -75,6 +86,7 @@ internal class MprisBridge private constructor(
         runCatching {
             hasTrack = false
             durationUs = 0L
+            currentTrackPath = null
             jmtc.setPosition(0L)
         }.onFailure { Logger.e(TAG, "clearTrack: ${it.message}") }
     }
@@ -155,6 +167,7 @@ internal class MprisBridge private constructor(
 
     /** `Metadata` is a package-private map inside JMTC; `setAt` also sends PropertiesChanged. */
     private fun writeTrackId(mediaId: String) {
+        currentTrackPath = trackPath(mediaId)
         val metadata =
             jmtc.javaClass
                 .getDeclaredField("Metadata")
@@ -164,6 +177,67 @@ internal class MprisBridge private constructor(
             .getDeclaredMethod("setAt", String::class.java, Any::class.java)
             .apply { isAccessible = true }
             .invoke(metadata, "mpris:trackid", dbusPath(trackPath(mediaId)))
+    }
+
+    /**
+     * Put a [Proxy] in front of JMTC on the bus object that checks `SetPosition` against the spec: nothing
+     * happens for a `trackId` that is not the current track, a negative position or one past the length.
+     * Every other call (also `Seek`, and the properties) goes straight to JMTC. dbus-java is reached by
+     * name, like everywhere in this class.
+     */
+    private fun guardSetPosition() {
+        val connection =
+            jmtc.javaClass
+                .getDeclaredField("connection")
+                .apply { isAccessible = true }
+                .get(jmtc) ?: return
+        val enabled =
+            jmtc.javaClass
+                .getDeclaredField("enabled")
+                .apply { isAccessible = true }
+                .get(jmtc) as? Boolean
+        // Not exported yet: nothing to replace here, and the guard would be gone once JMTC exports itself.
+        if (enabled != true) {
+            Logger.w(TAG, "guardSetPosition: JMTC is not exported yet, SetPosition stays unguarded")
+            return
+        }
+        val handler =
+            InvocationHandler { self, method, args ->
+                try {
+                    if (method.declaringClass == Any::class.java) {
+                        return@InvocationHandler when (method.name) {
+                            "equals" -> self === args?.firstOrNull()
+                            "hashCode" -> System.identityHashCode(self)
+                            else -> "MprisBridge proxy of $jmtc"
+                        }
+                    }
+                    if (method.name == "SetPosition" && args != null && args.size == 2 && !acceptSetPosition(args[0], args[1] as Long)) {
+                        return@InvocationHandler null
+                    }
+                    method.invoke(jmtc, *(args ?: emptyArray()))
+                } catch (e: InvocationTargetException) {
+                    throw e.targetException
+                }
+            }
+        val proxy = Proxy.newProxyInstance(jmtc.javaClass.classLoader, jmtc.javaClass.interfaces, handler)
+        connection.javaClass.methods
+            .first { it.name == "unExportObject" && it.parameterCount == 1 }
+            .invoke(connection, OBJECT_PATH)
+        connection.javaClass.methods
+            .first { it.name == "exportObject" && it.parameterCount == 2 && it.parameterTypes[0] == String::class.java }
+            .invoke(connection, OBJECT_PATH, proxy)
+    }
+
+    private fun acceptSetPosition(
+        trackId: Any?,
+        positionUs: Long,
+    ): Boolean {
+        val path = trackId?.let { runCatching { it.javaClass.getMethod("getPath").invoke(it) as? String }.getOrNull() }
+        val accepted = hasTrack && path == currentTrackPath && positionUs >= 0L && (durationUs <= 0L || positionUs <= durationUs)
+        if (!accepted) {
+            Logger.d(TAG, "SetPosition ignored: track=$path (now $currentTrackPath) position=${positionUs}us length=${durationUs}us")
+        }
+        return accepted
     }
 
     /** dbus-java is not on the compile classpath (JMTC keeps it to itself), so the object path is built by name. */
@@ -199,7 +273,10 @@ internal class MprisBridge private constructor(
                 }
                 val jmtc = JMTC.getInstance(JMTCSettings("SimpMusic", ""))
                 if (jmtc.javaClass.name != "io.github.selemba1000.linux.LinuxJMTC") return@runCatching null
-                MprisBridge(jmtc, scope, positionMs)
+                MprisBridge(jmtc, scope, positionMs).also { bridge ->
+                    runCatching { bridge.guardSetPosition() }
+                        .onFailure { Logger.e(TAG, "guardSetPosition: ${it.message}") }
+                }
             }.onFailure { Logger.e(TAG, "create: ${it.message}") }.getOrNull()
     }
 }
