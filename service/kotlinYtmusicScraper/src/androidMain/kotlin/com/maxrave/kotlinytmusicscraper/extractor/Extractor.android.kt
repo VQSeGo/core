@@ -72,8 +72,18 @@ actual class Extractor {
         }
     }
 
+    /**
+     * The account cookie is deliberately NOT handed to PipePipe. With `tokens` set it also asks the
+     * WEB_REMIX client and prefers its formats, but those URLs carry no `pot` (PipePipe has no PO
+     * token on its own: `NewPipe.setYoutubePoTokenResolver` is never set here), so googlevideo serves
+     * only the first ~1.1 MB of them: HEAD and any range past that answer 403, under any User-Agent.
+     * Measured 2026-11-16 (B14): signed in, both PipePipe tiers gave `c=WEB_REMIX` URLs and every
+     * HEAD was 403; with empty tokens the same tiers gave `c=VISIONOS` URLs and every HEAD was 200.
+     * Hand the cookie over again only together with a PO token resolver.
+     */
+    @Suppress("UNUSED_PARAMETER")
     actual fun logIn(cookie: String?) {
-        ServiceList.YouTube.tokens = cookie ?: ""
+        ServiceList.YouTube.tokens = ""
     }
 
     actual fun newPipePlayer(videoId: String): List<Pair<Int, String>> {
