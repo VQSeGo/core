@@ -173,6 +173,16 @@ internal class PlaylistRepositoryImpl(
                                 listTrackResult.add(0, originalTrack.toTrack())
                             }
                             Logger.w("Repository", "data: ${data.size}")
+                            // Opened by a link there is no seed track or artist in hand: the seed of
+                            // `RDAMVM<videoId>` is the first track YouTube returns for it. With nothing to
+                            // name it after, the title is the bare word rather than "null Radio".
+                            val seedTitle =
+                                originalTrack?.title
+                                    ?: artist?.name
+                                    ?: radioId.takeIf { it.startsWith("RDAMVM") }?.removePrefix("RDAMVM")?.let { seedId ->
+                                        listTrackResult.firstOrNull { it.videoId == seedId } ?: listTrackResult.firstOrNull()
+                                    }?.title
+                            val radioTitle = if (seedTitle.isNullOrBlank()) radioString else "$seedTitle $radioString"
                             val playlistBrowse =
                                 PlaylistBrowse(
                                     author = Author(id = "", name = "YouTube Music"),
@@ -190,7 +200,7 @@ internal class PlaylistRepositoryImpl(
                                                 544,
                                             ),
                                         ),
-                                    title = "${originalTrack?.title ?: artist?.name} $radioString",
+                                    title = radioTitle,
                                     trackCount = listTrackResult.size,
                                     tracks = listTrackResult,
                                     year = now().year.toString(),
