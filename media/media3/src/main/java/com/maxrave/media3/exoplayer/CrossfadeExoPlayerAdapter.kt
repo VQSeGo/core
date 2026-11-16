@@ -55,6 +55,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -72,6 +73,10 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 private const val TAG = "CrossfadeExoPlayerAdapter"
+
+/** The longest precaching waits for the current track, see awaitCurrentTrackUnderway. */
+private const val PRECACHE_WAIT_MS = 20_000L
+private const val PRECACHE_POLL_MS = 250L
 
 /**
  * ExoPlayer implementation of [MediaPlayerInterface] with crossfade support.
@@ -2437,10 +2442,11 @@ internal class CrossfadeExoPlayerAdapter(
         precacheJob =
             coroutineScope.launch {
                 try {
+                    awaitCurrentTrackUnderway()
                     // The tracks Next will actually play, in Next's own order: shuffle-aware, wrapping
                     // under Repeat All. Picking `index + i` in playlist order precached tracks a shuffled
                     // queue never reached, and nothing released them until the queue was edited (#2619).
-                    // Read before the job first suspends, so an edit landing meanwhile cannot shift them.
+                    // Read before the loop below first suspends, so an edit landing meanwhile cannot shift them.
                     val targets = mutableListOf<GenericMediaItem>()
                     var from = localCurrentMediaItemIndex
                     for (i in 1..maxPrecacheCount) {
@@ -2497,6 +2503,27 @@ internal class CrossfadeExoPlayerAdapter(
     private fun cancelPrecaching() {
         precacheJob?.cancel()
         precacheJob = null
+    }
+
+    /**
+     * Precaching waits until the track meant to be heard is playing from a loaded source (or has
+     * failed), or [PRECACHE_WAIT_MS] at most. Every precache resolves a stream of its own, and those
+     * shared the network and the extractor with the track that was still being resolved: measured
+     * 2026-11-16 on the phone, a link opened at launch resolved alongside two precaches of the queue
+     * restored a moment before (thrown away 2.5 s later, still resolving 10 s on) and two of its own
+     * radio started a second after it. A paused queue, the one restored at launch above all, is not
+     * precached until it plays or the wait runs out.
+     */
+    private suspend fun awaitCurrentTrackUnderway() {
+        withTimeoutOrNull(PRECACHE_WAIT_MS) {
+            while (true) {
+                val player = currentPlayer ?: break
+                val state = player.playbackState
+                if (player.playerError != null || state == Player.STATE_ENDED) break
+                if (player.playWhenReady && state == Player.STATE_READY) break
+                delay(PRECACHE_POLL_MS)
+            }
+        }
     }
 
     /**

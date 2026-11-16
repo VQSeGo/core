@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -54,6 +55,10 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
 
 private const val TAG = "MpvPlayerAdapter"
+
+/** The longest precaching waits for the current track, see awaitCurrentTrackUnderway. */
+private const val PRECACHE_WAIT_MS = 20_000L
+private const val PRECACHE_POLL_MS = 250L
 
 /**
  * mpv (libmpv via JNA) implementation of [MediaPlayerInterface].
@@ -2608,10 +2613,11 @@ class MpvPlayerAdapter(
         precacheJob =
             coroutineScope.launch {
                 try {
+                    awaitCurrentTrackUnderway()
                     // The tracks Next will actually play, in Next's own order: shuffle-aware, wrapping
                     // under Repeat All. Picking `index + i` in playlist order precached tracks a shuffled
                     // queue never reached, and nothing released them until the queue was edited (#2619).
-                    // Read before the job first suspends, so an edit landing meanwhile cannot shift them.
+                    // Read before the loop below first suspends, so an edit landing meanwhile cannot shift them.
                     val targets = mutableListOf<GenericMediaItem>()
                     var from = localCurrentMediaItemIndex
                     for (i in 1..maxPrecacheCount) {
@@ -2760,6 +2766,24 @@ class MpvPlayerAdapter(
     private fun cancelPrecaching() {
         precacheJob?.cancel()
         precacheJob = null
+    }
+
+    /**
+     * Precaching waits until the current track plays (or has failed or ended), or [PRECACHE_WAIT_MS]
+     * at most. Each precache resolves a stream of its own; on Android they were measured taking the
+     * network from a link opened at launch (2026-11-16), and the paused queue restored at launch is
+     * the same here: the link replaces it seconds later. Not precached until it plays or the wait ends.
+     */
+    private suspend fun awaitCurrentTrackUnderway() {
+        withTimeoutOrNull(PRECACHE_WAIT_MS) {
+            while (true) {
+                if (currentPlayer == null) break
+                when (internalState) {
+                    InternalState.PLAYING, InternalState.ENDED, InternalState.ERROR, InternalState.IDLE -> break
+                    else -> delay(PRECACHE_POLL_MS)
+                }
+            }
+        }
     }
 
     private fun clearPrecacheExceptCurrentInternal() {
