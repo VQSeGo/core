@@ -87,12 +87,19 @@ fun isNoAnswer(throwable: Throwable?): Boolean {
  *
  * Short on purpose: the first request after the window finds out for itself, so a network that came
  * back is never refused for long. Cleared by any answer from YouTube.
+ *
+ * The platform can also say outright that the device has no network ([setDeviceOffline], Android).
+ * That needs no first request to find out: with a VPN tunnel left up in airplane mode every request
+ * waits out its DNS timeout (8-18 s measured 2026-11-16 on the phone) before the window above opens.
  */
 object NetworkGate {
     private const val WINDOW_MS = 4_000L
 
     @Volatile
     private var lostAt: TimeMark? = null
+
+    @Volatile
+    private var deviceOffline = false
 
     fun markLost() {
         lostAt = TimeSource.Monotonic.markNow()
@@ -102,5 +109,10 @@ object NetworkGate {
         lostAt = null
     }
 
-    fun isLost(): Boolean = lostAt?.let { it.elapsedNow().inWholeMilliseconds < WINDOW_MS } == true
+    /** From the platform's own view of the networks; true only when there is none to carry a request. */
+    fun setDeviceOffline(offline: Boolean) {
+        deviceOffline = offline
+    }
+
+    fun isLost(): Boolean = deviceOffline || lostAt?.let { it.elapsedNow().inWholeMilliseconds < WINDOW_MS } == true
 }

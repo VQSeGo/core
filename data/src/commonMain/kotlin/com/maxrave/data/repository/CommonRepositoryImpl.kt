@@ -11,6 +11,7 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.CommonRepository
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.kotlinytmusicscraper.extractor.BravePipeFirst
+import com.maxrave.kotlinytmusicscraper.utils.NetworkGate
 import com.maxrave.logger.Logger
 import com.maxrave.spotify.Spotify
 import kotlinx.coroutines.CoroutineScope
@@ -65,6 +66,8 @@ internal class CommonRepositoryImpl(
             // ready by then instead of being fetched by every track resolved at once.
             if (braveFirst) coroutineScope.launch(Dispatchers.IO) { youTube.warmUpExtractor() }
         }
+        // A stream asked for while the device has no network fails at once instead of after a DNS timeout.
+        watchDeviceNetwork { hasNetwork -> NetworkGate.setDeviceOffline(!hasNetwork) }
         BravePipeFirst.onOutcome = { braveFirst ->
             coroutineScope.launch {
                 dataStoreManager.putString(
