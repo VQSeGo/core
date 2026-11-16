@@ -11,6 +11,12 @@ import kotlinx.coroutines.flow.Flow
 
 interface HomeRepository {
     /**
+     * Emits when the network is back after it was gone (the device reports a link again, or YouTube answers
+     * after a request that got none). Home refreshes itself on it when it shows its saved copy.
+     */
+    val networkRestored: Flow<Unit>
+
+    /**
      * @return Triple of continueParams, HomeItem List and the URL of the page background image
      * YouTube sends with Home (null when it sends none).
      *

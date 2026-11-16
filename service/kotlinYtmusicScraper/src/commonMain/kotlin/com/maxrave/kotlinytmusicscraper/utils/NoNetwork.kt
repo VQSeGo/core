@@ -1,5 +1,8 @@
 package com.maxrave.kotlinytmusicscraper.utils
 
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
@@ -101,17 +104,29 @@ object NetworkGate {
     @Volatile
     private var deviceOffline = false
 
+    private val _restored = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /**
+     * Emits when the network is back after it was gone: the platform reports a link again (Android), or an
+     * answer arrives after a request that got none. A screen showing a saved copy for want of a network
+     * refreshes itself on it.
+     */
+    val restored: SharedFlow<Unit> = _restored
+
     fun markLost() {
         lostAt = TimeSource.Monotonic.markNow()
     }
 
     fun markReachable() {
+        if (lostAt != null) _restored.tryEmit(Unit)
         lostAt = null
     }
 
     /** From the platform's own view of the networks; true only when there is none to carry a request. */
     fun setDeviceOffline(offline: Boolean) {
+        val wasOffline = deviceOffline
         deviceOffline = offline
+        if (wasOffline && !offline) _restored.tryEmit(Unit)
     }
 
     fun isLost(): Boolean = deviceOffline || lostAt?.let { it.elapsedNow().inWholeMilliseconds < WINDOW_MS } == true

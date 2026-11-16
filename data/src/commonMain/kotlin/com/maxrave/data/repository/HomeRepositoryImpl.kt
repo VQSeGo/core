@@ -19,6 +19,7 @@ import com.maxrave.domain.repository.HomeRepository
 import com.maxrave.domain.utils.Resource
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.kotlinytmusicscraper.models.response.BrowseResponse
+import com.maxrave.kotlinytmusicscraper.utils.NetworkGate
 import com.maxrave.logger.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -61,6 +62,8 @@ internal class HomeRepositoryImpl(
         Json {
             ignoreUnknownKeys = true
         }
+
+    override val networkRestored: Flow<Unit> get() = NetworkGate.restored
 
     override fun getHomeData(
         params: String?,
