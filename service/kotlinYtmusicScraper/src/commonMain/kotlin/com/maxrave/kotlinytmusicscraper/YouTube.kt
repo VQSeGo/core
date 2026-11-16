@@ -132,6 +132,7 @@ import kotlin.random.Random
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
+import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 private const val TAG = "YouTubeScraper"
@@ -1512,6 +1513,120 @@ class YouTube {
         return resolvePlayer(videoId, playlistId, noLogIn, preferredAudioLanguage)
     }
 
+    /**
+     * What a track played from a download or the listening cache needs refreshed: a cpn and the
+     * tracking links, from the WEB_REMIX answer alone. [player] would also walk the extractor tiers
+     * for a stream nobody plays (3-8 s and two to four requests): measured 2026-11-16 on the phone,
+     * the restored track's refresh resolved in full beside a link opened at launch, and both
+     * extractions finished together, 6.5 s each.
+     */
+    suspend fun playbackTracking(videoId: String): Result<Pair<String, PlayerResponse>> {
+        if (NetworkGate.isLost()) {
+            Logger.i("Offline", "tracking $videoId no network (recent)")
+            return Result.failure(NoNetworkException())
+        }
+        return runCatching {
+            val cpn = newCpn()
+            cpn to innertubePlayer(videoId, null, cpn, TimeSource.Monotonic.markNow())
+        }.recoverCatching {
+            if (isNoAnswer(it)) NetworkGate.markLost()
+            throw if (isNoNetwork(it) && it !is NoNetworkException) NoNetworkException(it) else it
+        }
+    }
+
+    private fun newCpn(): String =
+        (1..16)
+            .map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"[Random.nextInt(0, 64)] }
+            .joinToString("")
+
+    /**
+     * The WEB_REMIX player answer alone: video details, tracking links (with YouTube's `fexp` carried
+     * over) and the formats still to be deciphered. [resolvePlayer] goes on to the extractor tiers.
+     */
+    @OptIn(ExperimentalTime::class)
+    private suspend fun innertubePlayer(
+        videoId: String,
+        playlistId: String?,
+        cpn: String,
+        playerStarted: TimeMark,
+    ): PlayerResponse =
+        ytMusic
+            .player(
+                WEB_REMIX,
+                videoId,
+                playlistId,
+                cpn,
+                signatureTimestamp =
+                    run {
+                        val today = Clock.System.todayIn(TimeZone.UTC)
+                        val epoch =
+                            Instant
+                                .fromEpochSeconds(0)
+                                .toLocalDateTime(TimeZone.UTC)
+                                .date
+                        epoch.daysUntil(today)
+                    },
+            ).body<PlayerResponse>()
+            .also {
+                NetworkGate.markReachable()
+                Logger.i(
+                    "Offline",
+                    "resolve $videoId innertube ${playerStarted.elapsedNow().inWholeMilliseconds} " +
+                        "status=${it.playabilityStatus.status}",
+                )
+            }.let {
+                val fexp =
+                    it.streamingData
+                        ?.serverAbrStreamingUrl
+                        ?.toKmpUri()
+                        ?.getQueryParameter("fexp")
+                val playbackTracking = it.playbackTracking
+                it.copy(
+                    playbackTracking =
+                        playbackTracking?.copy(
+                            atrUrl =
+                                playbackTracking.atrUrl?.copy(
+                                    baseUrl =
+                                        playbackTracking.atrUrl.baseUrl
+                                            ?.toKmpUri()
+                                            ?.buildUpon()
+                                            ?.apply {
+                                                if (fexp != null) {
+                                                    appendQueryParameter("fexp", fexp)
+                                                }
+                                            }?.build()
+                                            ?.toString(),
+                                ),
+                            videostatsPlaybackUrl =
+                                playbackTracking.videostatsPlaybackUrl?.copy(
+                                    baseUrl =
+                                        playbackTracking.videostatsPlaybackUrl.baseUrl
+                                            ?.toKmpUri()
+                                            ?.buildUpon()
+                                            ?.apply {
+                                                if (fexp != null) {
+                                                    appendQueryParameter("fexp", fexp)
+                                                }
+                                            }?.build()
+                                            ?.toString(),
+                                ),
+                            videostatsWatchtimeUrl =
+                                playbackTracking.videostatsWatchtimeUrl?.copy(
+                                    baseUrl =
+                                        playbackTracking.videostatsWatchtimeUrl.baseUrl
+                                            ?.toKmpUri()
+                                            ?.buildUpon()
+                                            ?.apply {
+                                                if (fexp != null) {
+                                                    appendQueryParameter("fexp", fexp)
+                                                }
+                                            }?.build()
+                                            ?.toString(),
+                                ),
+                        ),
+                )
+            }
+
     @OptIn(ExperimentalTime::class)
     private suspend fun resolvePlayer(
         videoId: String,
@@ -1520,96 +1635,10 @@ class YouTube {
         preferredAudioLanguage: String?,
     ): Result<Triple<String?, PlayerResponse, MediaType>> =
         runCatching {
-            val cpn =
-                (1..16)
-                    .map {
-                        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"[
-                            Random.nextInt(
-                                0,
-                                64,
-                            ),
-                        ]
-                    }.joinToString("")
-
+            val cpn = newCpn()
             var decodedSigResponse: PlayerResponse? = null
             val playerStarted = TimeSource.Monotonic.markNow()
-            val tempRes =
-                ytMusic
-                    .player(
-                        WEB_REMIX,
-                        videoId,
-                        playlistId,
-                        cpn,
-                        signatureTimestamp =
-                            run {
-                                val today = Clock.System.todayIn(TimeZone.UTC)
-                                val epoch =
-                                    Instant
-                                        .fromEpochSeconds(0)
-                                        .toLocalDateTime(TimeZone.UTC)
-                                        .date
-                                epoch.daysUntil(today)
-                            },
-                    ).body<PlayerResponse>()
-                    .also {
-                        NetworkGate.markReachable()
-                        Logger.i(
-                            "Offline",
-                            "resolve $videoId innertube ${playerStarted.elapsedNow().inWholeMilliseconds} " +
-                                "status=${it.playabilityStatus.status}",
-                        )
-                    }.let {
-                        val fexp =
-                            it.streamingData
-                                ?.serverAbrStreamingUrl
-                                ?.toKmpUri()
-                                ?.getQueryParameter("fexp")
-                        val playbackTracking = it.playbackTracking
-                        it.copy(
-                            playbackTracking =
-                                playbackTracking?.copy(
-                                    atrUrl =
-                                        playbackTracking.atrUrl?.copy(
-                                            baseUrl =
-                                                playbackTracking.atrUrl.baseUrl
-                                                    ?.toKmpUri()
-                                                    ?.buildUpon()
-                                                    ?.apply {
-                                                        if (fexp != null) {
-                                                            appendQueryParameter("fexp", fexp)
-                                                        }
-                                                    }?.build()
-                                                    ?.toString(),
-                                        ),
-                                    videostatsPlaybackUrl =
-                                        playbackTracking.videostatsPlaybackUrl?.copy(
-                                            baseUrl =
-                                                playbackTracking.videostatsPlaybackUrl.baseUrl
-                                                    ?.toKmpUri()
-                                                    ?.buildUpon()
-                                                    ?.apply {
-                                                        if (fexp != null) {
-                                                            appendQueryParameter("fexp", fexp)
-                                                        }
-                                                    }?.build()
-                                                    ?.toString(),
-                                        ),
-                                    videostatsWatchtimeUrl =
-                                        playbackTracking.videostatsWatchtimeUrl?.copy(
-                                            baseUrl =
-                                                playbackTracking.videostatsWatchtimeUrl.baseUrl
-                                                    ?.toKmpUri()
-                                                    ?.buildUpon()
-                                                    ?.apply {
-                                                        if (fexp != null) {
-                                                            appendQueryParameter("fexp", fexp)
-                                                        }
-                                                    }?.build()
-                                                    ?.toString(),
-                                        ),
-                                ),
-                        )
-                    }
+            val tempRes = innertubePlayer(videoId, playlistId, cpn, playerStarted)
 
             // A live broadcast has no fixed-length formats to decode: it plays from one HLS
             // playlist. videoDetails is present even on a response this client was refused, so the

@@ -110,14 +110,13 @@ internal class StreamRepositoryImpl(
             Logger.d("Stream", "now: ${now()}")
             Logger.d("Stream", "isExpired: ${oldFormat.expiredTime.isBefore(now())}")
             if (oldFormat.expiredTime.isBefore(now())) {
-                // Through the shared answer, with the audio stream's key: a cached track whose format
-                // expired used to resolve twice in a row (here and for the stream), each one in full.
-                sharedPlayer(
-                    videoId,
-                    noLogIn = false,
-                    preferredAudioLanguage = dataStoreManager.preferredAudioLanguage.first(),
-                ).onSuccess { triple ->
-                        val response = triple.second
+                // The tracking links only: the stream of a track played from its copy is not needed, and
+                // a full resolution here took the network and the extractor from the track the user
+                // had just asked for (YouTube.playbackTracking). A copy that turns out partial asks for
+                // its stream through getStream like any other track.
+                youTube
+                    .playbackTracking(videoId)
+                    .onSuccess { (cpn, response) ->
                         localDataSource.updateNewFormat(
                             oldFormat.copy(
                                 expiredTime = now().plusSeconds(response.streamingData?.expiresInSeconds?.toLong() ?: 0L),
@@ -136,7 +135,7 @@ internal class StreamRepositoryImpl(
                                         "https://s.youtube.com",
                                         "https://music.youtube.com",
                                     ),
-                                cpn = triple.first,
+                                cpn = cpn,
                             ),
                         )
                         Logger.w("UpdateFormat", "Updated format for $videoId")
