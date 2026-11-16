@@ -740,6 +740,10 @@ interface DatabaseDao {
     @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
     suspend fun insertNewFormat(format: NewFormatEntity)
 
+    /** Writes the row only when the track has none: an existing one is left exactly as it is. */
+    @Insert(onConflict = OnConflictStrategy.Companion.IGNORE)
+    suspend fun insertNewFormatIfAbsent(format: NewFormatEntity)
+
     @Update
     suspend fun updateNewFormat(format: NewFormatEntity)
 

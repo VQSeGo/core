@@ -259,7 +259,7 @@ internal class StreamRepositoryImpl(
                             (if (muxed) ", HLS" else "") +
                             ", expires in ${response.streamingData?.expiresInSeconds}s",
                     )
-                    insertNewFormat(
+                    val formatRow =
                         NewFormatEntity(
                             videoId = if (VIDEO_QUALITY.itags.contains(format?.itag)) "${MERGING_DATA_TYPE.VIDEO}$videoId" else videoId,
                             itag = format?.itag ?: itag,
@@ -303,8 +303,16 @@ internal class StreamRepositoryImpl(
                             expiredTime = now().plusSeconds(response.streamingData?.expiresInSeconds?.toLong() ?: 0L),
                             audioUrl = if (muxed) response.streamingData?.hlsManifestUrl else format?.url,
                             videoUrl = if (muxed) response.streamingData?.hlsManifestUrl else videoFormat?.url,
-                        ),
-                    )
+                        )
+                    // A download resolves the stream at the download quality, which is not the quality
+                    // the track plays at. The row of a track is what playback reads (tracking links, cpn,
+                    // loudness, the URL it reuses) and what its collectors re-emit on every write, so a
+                    // download must never replace it: it only fills in a track that has no row yet.
+                    if (isDownloading) {
+                        localDataSource.insertNewFormatIfAbsent(formatRow)
+                    } else {
+                        insertNewFormat(formatRow)
+                    }
                     if (data.first != null) {
                         emit(
                             if (muxed) {
