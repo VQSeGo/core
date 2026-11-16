@@ -387,7 +387,25 @@ internal class DownloadUtils(
         downloadManager.removeAllDownloads()
     }
 
+    private fun dropListeningCopy(key: String) {
+        try {
+            if (playerCache.keys.contains(key)) {
+                playerCache.removeResource(key)
+                Logger.i("Offline", "cache $key dropped (downloaded)")
+            }
+        } catch (e: Exception) {
+            Logger.w("Offline", "cache $key not dropped: ${e.message}")
+        }
+    }
+
     init {
+        // Tracks that sit in both caches from before this was done at the end of a download.
+        coroutineScope.launch {
+            playerCache.keys
+                .toList()
+                .filter { downloadCache.isFullyCached(it, 0L) }
+                .forEach { dropListeningCopy(it) }
+        }
         coroutineScope.launch {
             var previousIds = emptySet<String>()
             downloads.collect { download ->
@@ -531,13 +549,14 @@ internal class DownloadUtils(
                         // its own here, on a coroutine of its own, could land after a removal had
                         // already reset the song, and nothing would correct it once the song left
                         // the map.
-                        when (download.state) {
-                            Download.STATE_COMPLETED -> {
-                                playerCache.removeResource(id)
-                            }
-
-                            else -> {
-                            }
+                        if (download.state == Download.STATE_COMPLETED) {
+                            // The player reads downloadCache first, so the listening copy would only take
+                            // space until the size limit pushed it out. This callback runs on the main
+                            // thread and SimpleCache waits for a write in progress, so not here. A copy
+                            // being played right now is safe: playback re-checks downloadCache at every
+                            // chunk (see the resolver in Media3ServiceModule), and its open file is not
+                            // cut by the removal.
+                            coroutineScope.launch { dropListeningCopy(id) }
                         }
                     }
                 }

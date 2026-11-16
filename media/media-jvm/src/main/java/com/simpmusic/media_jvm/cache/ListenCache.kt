@@ -54,6 +54,10 @@ class ListenCache(
     init {
         // Nothing runs yet: an unfinished file here was left by a transfer the last run died in.
         store.dropAllPartials()
+        // Copies of tracks that were downloaded before a finished download removed its own.
+        scope.launch {
+            cachedFiles().map { it.nameWithoutExtension }.filter { File(getDownloadPath(), "$it.webm").isFile }.forEach(::dropDownloaded)
+        }
         scope.launch {
             for (request in queue) {
                 if (request.videoId !in pendingIds) continue
