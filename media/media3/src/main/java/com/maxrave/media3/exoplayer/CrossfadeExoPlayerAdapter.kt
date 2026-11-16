@@ -19,6 +19,9 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
@@ -64,6 +67,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.IOException
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
@@ -77,6 +81,14 @@ private const val TAG = "CrossfadeExoPlayerAdapter"
 /** The longest precaching waits for the current track, see awaitCurrentTrackUnderway. */
 private const val PRECACHE_WAIT_MS = 20_000L
 private const val PRECACHE_POLL_MS = 250L
+
+/**
+ * Failed loads in a row after which a precached player is dropped. ExoPlayer retries a failed load by
+ * itself and surfaces the error only when playback needs the data, which a paused precache never does:
+ * a link that no longer resolves (the network gone mid-load) was asked again every 5 s for as long as
+ * the player sat in the map (2 minutes in the log of 2026-11-16, until the track was promoted).
+ */
+private const val PRECACHE_MAX_LOAD_ERRORS = 3
 
 /**
  * ExoPlayer implementation of [MediaPlayerInterface] with crossfade support.
@@ -2483,6 +2495,7 @@ internal class CrossfadeExoPlayerAdapter(
                             player.setMediaItem(mediaItem.toMedia3MediaItem())
                             val retryListener = precacheRetryListener(mediaItem.mediaId, player)
                             player.addListener(retryListener)
+                            player.addAnalyticsListener(precacheLoadErrorListener(mediaItem.mediaId, player))
                             player.prepare()
                             precachedPlayers[mediaItem.mediaId] = PrecachedPlayer(player, mediaItem, retryListener)
                             Logger.d(TAG, "Precached player for ${mediaItem.mediaId}")
@@ -2579,6 +2592,42 @@ internal class CrossfadeExoPlayerAdapter(
                         Logger.e(TAG, "Precache retry failed for $videoId: ${e.message}")
                     }
                 }
+            }
+        }
+
+    /**
+     * Counts the failed loads a precached player retries inside ExoPlayer, where no player error is
+     * raised (see [PRECACHE_MAX_LOAD_ERRORS]): after that many without a finished load in between the
+     * player is evicted, and the track is precached again at the next trigger. Harmless once the player
+     * is promoted or released: it is no longer in the map then.
+     */
+    private fun precacheLoadErrorListener(
+        videoId: String,
+        player: ExoPlayer,
+    ): AnalyticsListener =
+        object : AnalyticsListener {
+            private var failedLoads = 0
+
+            override fun onLoadCompleted(
+                eventTime: AnalyticsListener.EventTime,
+                loadEventInfo: LoadEventInfo,
+                mediaLoadData: MediaLoadData,
+            ) {
+                failedLoads = 0
+            }
+
+            override fun onLoadError(
+                eventTime: AnalyticsListener.EventTime,
+                loadEventInfo: LoadEventInfo,
+                mediaLoadData: MediaLoadData,
+                error: IOException,
+                wasCanceled: Boolean,
+            ) {
+                if (wasCanceled || precachedPlayers[videoId]?.player !== player) return
+                if (++failedLoads < PRECACHE_MAX_LOAD_ERRORS) return
+                precachedPlayers.remove(videoId)
+                Logger.w(TAG, "Evicting precached player for $videoId: $failedLoads loads failed (${error.javaClass.simpleName})")
+                coroutineScope.launch { cleanupPlayerInternal(player) }
             }
         }
 
