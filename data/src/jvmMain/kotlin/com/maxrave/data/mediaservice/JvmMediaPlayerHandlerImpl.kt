@@ -106,6 +106,7 @@ import kotlinx.serialization.json.Json
 import io.github.selemba1000.JMTC
 import io.github.selemba1000.JMTCButtonCallback
 import io.github.selemba1000.JMTCCallbacks
+import io.github.selemba1000.JMTCSeekCallback
 import io.github.selemba1000.JMTCSettings
 import org.koin.mp.KoinPlatform.getKoin
 import org.simpmusic.nowplayingcenter.NPYC
@@ -213,6 +214,11 @@ class JvmMediaPlayerHandlerImpl(
         } else {
             null
         }
+
+    // What NPYC / JMTC leave out on the MPRIS side (length, track id, position, Seeked, CanPause).
+    // Built in installSystemMediaCallbacks, once NPYC has created the JMTC singleton; null elsewhere.
+    @Volatile
+    private var mpris: MprisBridge? = null
 
     // macOS Media Integration (Now Playing Center + Remote Command Center)
     private val macOSMediaIntegration: MacOSMediaIntegration? by lazy {
@@ -775,6 +781,11 @@ class JvmMediaPlayerHandlerImpl(
                         song.albumName ?: "",
                         song.thumbnails,
                     )
+                    // After setNowPlaying: it rewrites the metadata, trackid included.
+                    mpris?.updateTrack(
+                        mediaItem.mediaId,
+                        player.duration.takeIf { it > 0L } ?: (song.durationSeconds * 1000L),
+                    )
                     updateMacOSNowPlayingInfo(song)
                 }
                 if (dataStoreManager.sendBackToGoogle.first() == TRUE) {
@@ -917,12 +928,22 @@ class JvmMediaPlayerHandlerImpl(
                                 queueData.value.data.playlistId?.isEndlessQueueId() == true
                         ),
             )
-        coroutineScope.launch {
-            nypc?.setButtonEnabled(
+        val mprisBridge = mpris
+        if (mprisBridge != null) {
+            mprisBridge.updateState(
                 isPlaying = controlState.value.isPlaying,
                 canGoNext = controlState.value.isNextAvailable,
                 canGoPrevious = controlState.value.isPreviousAvailable,
+                hasTrack = player.currentMediaItem != null,
             )
+        } else {
+            coroutineScope.launch {
+                nypc?.setButtonEnabled(
+                    isPlaying = controlState.value.isPlaying,
+                    canGoNext = controlState.value.isNextAvailable,
+                    canGoPrevious = controlState.value.isPreviousAvailable,
+                )
+            }
         }
         updateMacOSCommandsEnabled()
     }
@@ -1092,6 +1113,17 @@ class JvmMediaPlayerHandlerImpl(
      */
     private fun installSystemMediaCallbacks() {
         if (nypc == null) return
+        mpris =
+            MprisBridge.create(coroutineScope) { player.currentPosition }?.also { bridge ->
+                // A queue restored before this point already published its state through NPYC.
+                player.currentMediaItem?.let { bridge.updateTrack(it.mediaId, player.duration.coerceAtLeast(0L)) }
+                bridge.updateState(
+                    isPlaying = player.isPlaying,
+                    canGoNext = player.hasNextMediaItem(),
+                    canGoPrevious = player.hasPreviousMediaItem(),
+                    hasTrack = player.currentMediaItem != null,
+                )
+            }
         runCatching {
             JMTC.getInstance(JMTCSettings("SimpMusic", "")).setCallbacks(
                 JMTCCallbacks().apply {
@@ -1110,6 +1142,18 @@ class JvmMediaPlayerHandlerImpl(
                     onNext = JMTCButtonCallback { coroutineScope.launch { onPlayerEvent(PlayerEvent.Next) } }
                     onPrevious = JMTCButtonCallback { coroutineScope.launch { onPlayerEvent(PlayerEvent.Previous) } }
                     onStop = JMTCButtonCallback { coroutineScope.launch { onPlayerEvent(PlayerEvent.Stop) } }
+                    // MPRIS Seek and SetPosition, both already turned into an absolute position in
+                    // microseconds. Past the end the seek lands on the end, which moves to the next track.
+                    onSeek =
+                        JMTCSeekCallback { positionUs ->
+                            coroutineScope.launch {
+                                val duration = player.duration
+                                var targetMs = (positionUs / 1000L).coerceAtLeast(0L)
+                                if (duration > 0L) targetMs = targetMs.coerceAtMost(duration)
+                                resetPositionSmoothing()
+                                player.seekTo(targetMs)
+                            }
+                        }
                 },
             )
         }.onFailure { Logger.e(TAG, "installSystemMediaCallbacks: ${it.message}") }
@@ -1160,6 +1204,7 @@ class JvmMediaPlayerHandlerImpl(
             PlayerEvent.Stop -> {
                 stopProgressUpdate()
                 player.stop()
+                mpris?.clearTrack()
                 _nowPlayingState.value = NowPlayingTrackState.initial()
             }
 
@@ -2656,6 +2701,7 @@ class JvmMediaPlayerHandlerImpl(
     override fun release() {
         Logger.d("ServiceHandler", "Starting release process")
         nypc?.removeListener()
+        mpris?.release()
         if (nypc != null) runCatching { JMTC.getInstance(JMTCSettings("SimpMusic", "")).setCallbacks(JMTCCallbacks()) }
         // Release macOS media integration
         clearMacOSNowPlayingInfo()
@@ -2761,6 +2807,7 @@ class JvmMediaPlayerHandlerImpl(
             PlayerConstants.STATE_READY -> {
                 Logger.d(TAG, "onPlaybackStateChanged: Ready")
                 _simpleMediaState.value = SimpleMediaState.Ready(player.duration)
+                mpris?.updateDuration(player.duration)
             }
 
             else -> {
@@ -2775,10 +2822,12 @@ class JvmMediaPlayerHandlerImpl(
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         _controlState.value = _controlState.value.copy(isPlaying = isPlaying)
         if (isPlaying) {
+            mpris?.startPositionPump()
             unplayableTrackSkipper.onPlaying()
             startProgressUpdate()
             nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
         } else {
+            mpris?.stopPositionPump()
             stopProgressUpdate()
             mayBeSaveRecentSong()
             mayBeSavePlaybackState()
@@ -2791,6 +2840,7 @@ class JvmMediaPlayerHandlerImpl(
     }
 
     override fun onSeeked(positionMs: Long) {
+        mpris?.notifySeeked(positionMs)
         // Paused, the progress ticker is stopped, so nothing else tells the UI the position moved:
         // every seek bar, clock and lyric line would wait for play to catch up (#2480). Unlike the
         // Android twin there is no Discord refresh here: each seek branch already does it.
@@ -2822,6 +2872,7 @@ class JvmMediaPlayerHandlerImpl(
             if (mediaItem != null) {
                 getDataOfNowPlayingState(mediaItem)
             } else {
+                mpris?.clearTrack()
                 _nowPlayingState.update {
                     NowPlayingTrackState
                         .initial()
