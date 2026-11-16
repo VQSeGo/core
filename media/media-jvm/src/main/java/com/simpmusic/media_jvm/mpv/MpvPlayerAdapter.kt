@@ -201,11 +201,18 @@ class MpvPlayerAdapter(
     private var positionUpdateJob: Job? = null
 
     // Precaching system
-    private data class PrecachedPlayer(
+    private class PrecachedPlayer(
         val player: MpvPlayer,
         val mediaItem: GenericMediaItem,
-        val source: PlayableSource,
-    )
+    ) {
+        /** Set on the event pump thread the moment mpv reports the load failed, so a promotion racing the
+         *  retry sees it; cleared again when a retry has loaded the file. */
+        @Volatile
+        var failed = false
+
+        /** Retries spent on this handle, up to [maxRetryCount]. */
+        var attempts = 0
+    }
 
     private val precachedPlayers = ConcurrentHashMap<String, PrecachedPlayer>()
     private var precacheEnabled = true
@@ -1627,7 +1634,7 @@ class MpvPlayerAdapter(
                     stopPositionUpdates()
 
                     // Extract URL on IO thread (network), mpv native calls stay on service thread
-                    val cachedPrecache = precachedPlayers.remove(videoId)
+                    val cachedPrecache = takeHealthyPrecachedPlayer(videoId)
                     var resolvedSource: PlayableSource? = null
                     val player =
                         if (cachedPrecache?.player != null) {
@@ -2166,7 +2173,7 @@ class MpvPlayerAdapter(
                     Logger.d(TAG, "Starting crossfade to track $nextIndex ($nextVideoId)")
 
                     // Extract URL on IO thread (network), mpv native calls stay on service thread
-                    val cachedPrecache = precachedPlayers.remove(nextVideoId)
+                    val cachedPrecache = takeHealthyPrecachedPlayer(nextVideoId)
                     val nextPlayer: MpvPlayer? =
                         if (cachedPrecache?.player != null) {
                             Logger.d(TAG, "Using precached player for crossfade")
@@ -2649,9 +2656,12 @@ class MpvPlayerAdapter(
                                     Logger.w(TAG, "Precaching skipped for ${mediaItem.mediaId}: could not create mpv player")
                                 } else {
                                     player.applyPlaybackLevels()
+                                    // In the map and listened to before the load starts: a failure that
+                                    // arrives at once must find its entry (see precacheListener).
+                                    val entry = PrecachedPlayer(player, mediaItem)
+                                    player.setEventListener(precacheListener(mediaItem.mediaId, entry))
+                                    precachedPlayers[mediaItem.mediaId] = entry
                                     player.loadFile(buildPlaybackUrl(source), startPaused = true)
-                                    precachedPlayers[mediaItem.mediaId] =
-                                        PrecachedPlayer(player, mediaItem, source)
                                     Logger.d(TAG, "Precached player for ${mediaItem.mediaId}")
                                 }
                             } catch (e: Exception) {
@@ -2667,6 +2677,84 @@ class MpvPlayerAdapter(
                     }
                 }
             }
+    }
+
+    /**
+     * Removes and returns the precached handle of [videoId], or null if there is none or its load
+     * already failed: swapped in, it would start silent (the error came before anyone listened) and
+     * the track would never play. A failed one is released and the caller builds the track afresh.
+     */
+    private fun takeHealthyPrecachedPlayer(videoId: String): PrecachedPlayer? {
+        val cached = precachedPlayers.remove(videoId) ?: return null
+        cached.player.setEventListener(null)
+        if (cached.failed || cached.player.isReleased) {
+            Logger.w(TAG, "Discarding failed precached player for $videoId")
+            cleanupPlayerInternal(cached.player)
+            return null
+        }
+        return cached
+    }
+
+    /** Watches a precached handle while it waits for its turn; taken off when it is promoted. */
+    private fun precacheListener(
+        videoId: String,
+        entry: PrecachedPlayer,
+    ): MpvPlayerEventAdapter =
+        object : MpvPlayerEventAdapter() {
+            override fun error(player: MpvPlayer) {
+                entry.failed = true
+                coroutineScope.launch { retryOrEvictPrecache(videoId, entry) }
+            }
+        }
+
+    /**
+     * A precached load that failed (a stale or rejected stream URL, a network drop) is tried again on
+     * the same handle with a fresh URL, like the playing handle is, up to [maxRetryCount] times. A
+     * handle that keeps failing leaves the map and is released, so it is never swapped in and the
+     * track is precached again at the next trigger.
+     */
+    private suspend fun retryOrEvictPrecache(
+        videoId: String,
+        entry: PrecachedPlayer,
+    ) {
+        // Promoted, released or replaced since the error was raised: nothing left to retry.
+        if (precachedPlayers[videoId] !== entry) return
+        if (entry.attempts >= maxRetryCount) {
+            evictPrecache(videoId, entry, "retries exhausted")
+            return
+        }
+        entry.attempts++
+        Logger.w(TAG, "Precache load failed (attempt ${entry.attempts}/$maxRetryCount) for $videoId")
+        try {
+            val source =
+                withContext(Dispatchers.IO) {
+                    streamRepository.invalidateFormat(videoId)
+                    streamRepository.invalidateFormat("${MERGING_DATA_TYPE.VIDEO}$videoId")
+                    extractPlayableUrl(entry.mediaItem)
+                }
+            if (precachedPlayers[videoId] !== entry || entry.player.isReleased) return
+            if (source == null || source.url.isEmpty()) {
+                evictPrecache(videoId, entry, "no stream URL")
+                return
+            }
+            playerOrigins[entry.player] = videoId to source
+            entry.failed = false
+            entry.player.loadFile(buildPlaybackUrl(source), startPaused = true)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Logger.e(TAG, "Precache retry failed for $videoId: ${e.message}")
+            evictPrecache(videoId, entry, "retry threw")
+        }
+    }
+
+    private fun evictPrecache(
+        videoId: String,
+        entry: PrecachedPlayer,
+        reason: String,
+    ) {
+        if (!precachedPlayers.remove(videoId, entry)) return
+        Logger.w(TAG, "Evicting failed precached player for $videoId: $reason")
+        cleanupPlayerInternal(entry.player)
     }
 
     private fun cancelPrecaching() {
