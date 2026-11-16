@@ -15,6 +15,12 @@ interface StreamRepository {
 
     suspend fun updateFormat(videoId: String)
 
+    /**
+     * Starts resolving [videoId]'s stream for playback without waiting for it, so the player's own
+     * request a moment later joins it (or takes its answer) instead of starting from zero.
+     */
+    fun prefetchStream(videoId: String)
+
     fun getStream(
         dataStoreManager: DataStoreManager,
         videoId: String,

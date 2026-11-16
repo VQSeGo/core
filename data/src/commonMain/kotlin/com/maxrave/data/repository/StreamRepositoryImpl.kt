@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -143,6 +144,17 @@ internal class StreamRepositoryImpl(
                         Logger.e("UpdateFormat", "Error: ${throwable.message}")
                     }
             }
+        }
+    }
+
+    override fun prefetchStream(videoId: String) {
+        // The key getStream asks with for playback (audio or video alike), so the answer is shared.
+        resolveScope.launch {
+            sharedPlayer(
+                videoId,
+                noLogIn = false,
+                preferredAudioLanguage = dataStoreManager.preferredAudioLanguage.first(),
+            )
         }
     }
 
