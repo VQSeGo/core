@@ -1520,7 +1520,7 @@ class JvmMediaPlayerHandlerImpl(
         val firstPlayedTrack = _queueData.value.data.firstPlayedTrack ?: return
         coroutineScope.launch {
             if (playlistId.startsWith(LOCAL_PLAYLIST_ID)) {
-                songRepository.insertSong(firstPlayedTrack.toSongEntity()).collect {
+                songRepository.insertSong(firstPlayedTrack.toSongEntity().copy(inLibrary = Config.REMOVED_SONG_DATE_TIME)).collect {
                     Logger.d(TAG, "Inserted song: ${firstPlayedTrack.title}")
                 }
                 clearMediaItems()
@@ -2461,7 +2461,8 @@ class JvmMediaPlayerHandlerImpl(
             showToast(ToastType.ExplicitContent)
             return
         }
-        songRepository.insertSong(track.toSongEntity()).singleOrNull()?.let {
+        // A new row stays out of "Recently added" until the track really plays ([recordTrackPlayed]).
+        songRepository.insertSong(track.toSongEntity().copy(inLibrary = Config.REMOVED_SONG_DATE_TIME)).singleOrNull()?.let {
             Logger.d(TAG, "Inserted song: ${track.title}")
         }
         clearMediaItems()
