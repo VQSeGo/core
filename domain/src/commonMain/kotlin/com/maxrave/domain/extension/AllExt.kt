@@ -7,6 +7,7 @@ import com.maxrave.domain.data.model.cookie.CookieItem
 import com.maxrave.domain.data.player.GenericMediaItem
 import com.maxrave.domain.data.player.GenericMediaMetadata
 import com.maxrave.domain.utils.connectArtists
+import com.maxrave.domain.utils.isSongMedia
 import com.maxrave.domain.utils.toListName
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDateTime
@@ -69,7 +70,7 @@ fun GenericMediaItem.toSongEntity(): SongEntity =
     )
 
 fun SongEntity.toGenericMediaItem(): GenericMediaItem {
-    val isSong = (this.thumbnails?.contains("w544") == true && this.thumbnails.contains("h544"))
+    val isSong = this.isSongMedia()
     return GenericMediaItem(
         mediaId = this.videoId,
         uri = this.videoId,
@@ -93,13 +94,7 @@ fun Track.toGenericMediaItem(): GenericMediaItem {
         thumbUrl = Regex("([wh])120").replace(thumbUrl, "$1544")
     }
     val artistName: String = this.artists.toListName().connectArtists()
-    val isSong =
-        (
-            this.thumbnails?.last()?.height != 0 &&
-                this.thumbnails?.last()?.height == this.thumbnails?.last()?.width &&
-                this.thumbnails?.last()?.height != null
-        ) &&
-            (!thumbUrl.contains("hq720") && !thumbUrl.contains("maxresdefault"))
+    val isSong = this.isSongMedia()
     return GenericMediaItem(
         mediaId = this.videoId,
         uri = this.videoId,

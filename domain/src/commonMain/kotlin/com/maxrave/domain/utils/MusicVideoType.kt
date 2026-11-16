@@ -47,6 +47,23 @@ object MusicVideoType {
     fun isClip(musicVideoType: String?): Boolean =
         normalize(musicVideoType).let { it == MUSIC_VIDEO_TYPE_OMV || it == MUSIC_VIDEO_TYPE_UGC }
 
+    /**
+     * Song (audio, square cover) or clip (video) for playback. YouTube's own type decides when there is one:
+     * OMV and UGC are clips, ATV and the rest (official source music, private uploads) are songs. A clip
+     * listed in a playlist or an album has a square thumbnail there, so the cover shape alone calls it a song.
+     * Without a real type, and for podcast episodes (their covers have always decided), [coverLooksLikeSong]
+     * is the answer.
+     */
+    fun isSongMedia(
+        musicVideoType: String?,
+        coverLooksLikeSong: Boolean,
+    ): Boolean =
+        if (isKnown(musicVideoType) && !isPodcast(musicVideoType)) {
+            !isClip(musicVideoType)
+        } else {
+            coverLooksLikeSong
+        }
+
     /** Whether YouTube reported a type at all. */
     fun isKnown(musicVideoType: String?): Boolean = normalize(musicVideoType) != null
 

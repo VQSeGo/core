@@ -68,6 +68,7 @@ import com.maxrave.domain.utils.MusicVideoType
 import com.maxrave.domain.utils.Resource
 import com.maxrave.domain.utils.connectArtists
 import com.maxrave.domain.utils.isEndlessQueueId
+import com.maxrave.domain.utils.isSongMedia
 import com.maxrave.domain.utils.toArrayListTrack
 import com.maxrave.domain.utils.toListName
 import com.maxrave.domain.utils.toSongEntity
@@ -1978,19 +1979,7 @@ class JvmMediaPlayerHandlerImpl(
                 thumbUrl = Regex("([wh])120").replace(thumbUrl, "$1544")
             }
             val artistName: String = track.artists.toListName().connectArtists()
-            val isSong =
-                (
-                    track.thumbnails?.lastOrNull()?.height != 0 &&
-                        track.thumbnails?.lastOrNull()?.height == track.thumbnails?.lastOrNull()?.width &&
-                        track.thumbnails?.lastOrNull()?.height != null
-                ) &&
-                    (
-                        !thumbUrl
-                            .contains("hq720") &&
-                            !thumbUrl
-                                .contains("maxresdefault") &&
-                            !thumbUrl.contains("sddefault")
-                    )
+            val isSong = track.isSongMedia()
             if (track.artists.isNullOrEmpty()) {
                 songRepository
                     .getSongInfoEntity(track.videoId)
@@ -2123,19 +2112,7 @@ class JvmMediaPlayerHandlerImpl(
                 if (thumbUrl.contains("w120")) {
                     thumbUrl = Regex("([wh])120").replace(thumbUrl, "$1544")
                 }
-                val isSong =
-                    (
-                        track.thumbnails?.lastOrNull()?.height != 0 &&
-                            track.thumbnails?.lastOrNull()?.height == track.thumbnails?.lastOrNull()?.width &&
-                            track.thumbnails?.lastOrNull()?.height != null
-                    ) &&
-                        (
-                            !thumbUrl
-                                .contains("hq720") &&
-                                !thumbUrl
-                                    .contains("maxresdefault") &&
-                                !thumbUrl.contains("sddefault")
-                        )
+                val isSong = track.isSongMedia()
                 if (downloaded == 1) {
                     if (track.artists.isNullOrEmpty()) {
                         songRepository.getSongInfoEntity(track.videoId).lastOrNull().let { songInfo ->
@@ -2340,19 +2317,7 @@ class JvmMediaPlayerHandlerImpl(
                 ?: "http://i.ytimg.com/vi/${track.videoId}/maxresdefault.jpg"
         thumbUrl = Regex("=w\\d+-h\\d+").replace(thumbUrl, "=w544-h544")
         val artistName: String = track.artists.toListName().connectArtists()
-        val isSong =
-            (
-                track.thumbnails?.lastOrNull()?.height != 0 &&
-                    track.thumbnails?.lastOrNull()?.height == track.thumbnails?.lastOrNull()?.width &&
-                    track.thumbnails?.lastOrNull()?.height != null
-            ) &&
-                (
-                    !thumbUrl
-                        .contains("hq720") &&
-                        !thumbUrl
-                            .contains("maxresdefault") &&
-                        !thumbUrl.contains("sddefault")
-                )
+        val isSong = track.isSongMedia()
         if ((player.currentMediaItemIndex + 1 in 0..queueData.value.data.listTracks.size)) {
             if (track.artists.isNullOrEmpty()) {
                 songRepository.getSongInfoEntity(track.videoId).cancellable().lastOrNull().let { songInfo ->

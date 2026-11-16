@@ -144,16 +144,32 @@ fun Track.toSongEntity(): SongEntity {
 }
 
 /**
- * Song or clip for playback of a stored row. The type YouTube gave decides when the row has one: a clip
- * listed in a playlist has a square thumbnail there, which is rewritten to `w544-h544` and would pass for
- * a song. Rows without a real type fall back to the cover shape.
+ * Song or clip for playback of a stored row. See [MusicVideoType.isSongMedia]: the type YouTube gave
+ * decides, the cover shape is only the fallback.
  */
 fun SongEntity.isSongMedia(): Boolean =
-    if (MusicVideoType.isKnown(videoType)) {
-        !MusicVideoType.isClip(videoType)
-    } else {
-        thumbnails?.contains("w544") == true && thumbnails?.contains("h544") == true
-    }
+    MusicVideoType.isSongMedia(
+        musicVideoType = videoType,
+        coverLooksLikeSong = thumbnails?.contains("w544") == true && thumbnails?.contains("h544") == true,
+    )
+
+/**
+ * Song or clip for playback of a queue track. Same rule as [SongEntity.isSongMedia]; the fallback cover test
+ * is the square, non-`hq720` / `maxresdefault` / `sddefault` thumbnail. Every place that turns a [Track]
+ * into a playable item (`SONG` or `VIDEO` description) asks here, so the answer is spelled once.
+ */
+fun Track.isSongMedia(): Boolean {
+    val cover = thumbnails?.lastOrNull()
+    val url = cover?.url ?: "http://i.ytimg.com/vi/$videoId/maxresdefault.jpg"
+    val squareCover =
+        cover != null &&
+            cover.height != 0 &&
+            cover.height == cover.width &&
+            !url.contains("hq720") &&
+            !url.contains("maxresdefault") &&
+            !url.contains("sddefault")
+    return MusicVideoType.isSongMedia(musicVideoType = videoType, coverLooksLikeSong = squareCover)
+}
 
 fun SongEntity.toTrack(): Track {
     val listArtist = mutableListOf<Artist>()

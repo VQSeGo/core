@@ -79,13 +79,7 @@ fun Track.toMediaItem(): MediaItem {
         thumbUrl = Regex("([wh])120").replace(thumbUrl, "$1544")
     }
     val artistName: String = this.artists.toListName().connectArtists()
-    val isSong =
-        (
-            this.thumbnails?.last()?.height != 0 &&
-                this.thumbnails?.last()?.height == this.thumbnails?.last()?.width &&
-                this.thumbnails?.last()?.height != null
-        ) &&
-            (!thumbUrl.contains("hq720") && !thumbUrl.contains("maxresdefault"))
+    val isSong = this.isSongMedia()
     return MediaItem
         .Builder()
         .setMediaId(this.videoId)
