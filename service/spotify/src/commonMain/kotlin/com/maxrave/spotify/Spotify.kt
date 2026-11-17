@@ -88,9 +88,13 @@ class Spotify {
                 trackId,
             )
         if (response.status == HttpStatusCode.Unauthorized) throw SpotifyUnauthorizedException()
+        if (response.status == HttpStatusCode.NotFound) throw SpotifyLyricsNotFoundException()
         response.body<SpotifyLyricsResponse>()
     }
 }
 
 /** Spotify answered 401: the access or client token it was given is no longer accepted. */
 class SpotifyUnauthorizedException : Exception("Spotify rejected the token (401)")
+
+/** Spotify answered 404 on color-lyrics: it has no lyrics for this track. Not a failure. */
+class SpotifyLyricsNotFoundException : Exception("Spotify has no lyrics for this track (404)")

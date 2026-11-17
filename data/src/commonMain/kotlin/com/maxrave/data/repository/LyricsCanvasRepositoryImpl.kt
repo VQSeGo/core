@@ -14,6 +14,7 @@ import com.maxrave.domain.utils.Resource
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.logger.Logger
 import com.maxrave.spotify.Spotify
+import com.maxrave.spotify.SpotifyLyricsNotFoundException
 import com.maxrave.spotify.SpotifyUnauthorizedException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -197,7 +198,11 @@ internal class LyricsCanvasRepositoryImpl(
                                     }.onFailure {
                                         if (it is SpotifyUnauthorizedException) unauthorized = true
                                         if (!(unauthorized && retryOnUnauthorized)) {
-                                            Logger.e("LyricsCanvasRepositoryImpl", "getSpotifyLyrics failed: ${it.message}", it)
+                                            if (it is SpotifyLyricsNotFoundException) {
+                                                Logger.d("Lyrics", "Spotify has no lyrics for this track")
+                                            } else {
+                                                Logger.e("LyricsCanvasRepositoryImpl", "getSpotifyLyrics failed: ${it.message}", it)
+                                            }
                                             emit(Resource.Error<Lyrics>("Not found"))
                                         }
                                     }
@@ -299,6 +304,7 @@ internal class LyricsCanvasRepositoryImpl(
                 .searchBetterLyrics(qtrack, qartist, duration)
                 .onSuccess { ttml ->
                     if (ttml.isNullOrEmpty()) {
+                        Logger.d("Lyrics", "BetterLyrics has no text for this track")
                         emit(Resource.Error<Lyrics>("No BetterLyrics found"))
                         return@onSuccess
                     }

@@ -58,14 +58,19 @@ class SimpMusicLyricsClient {
         q_artist: String,
         durationSeconds: Int?,
     ) = runCatching {
-        val rs =
+        val response =
             lyricsService
                 .searchBetterLyrics(
                     q_track = q_track,
                     q_artist = q_artist,
                     durationSeconds = durationSeconds,
-                ).body<BetterLyricsResponse>()
-        rs.ttml
+                )
+        // 404 is the normal answer for a song BetterLyrics has no text for; a body without `ttml` means the same.
+        if (response.status.value == 404) {
+            null
+        } else {
+            response.body<BetterLyricsResponse>().ttml
+        }
     }
 
     private suspend inline fun <reified T> HttpResponse.bodyOrThrow(): T {
