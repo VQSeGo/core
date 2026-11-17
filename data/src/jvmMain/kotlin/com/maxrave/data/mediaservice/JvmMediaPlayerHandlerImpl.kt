@@ -255,7 +255,6 @@ class JvmMediaPlayerHandlerImpl(
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
     private val unplayableTrackSkipper = UnplayableTrackSkipper()
-    override var pushPlayerError: (PlayerError) -> Unit = {}
     private val _simpleMediaState = MutableStateFlow<SimpleMediaState>(SimpleMediaState.Initial)
     override val simpleMediaState: StateFlow<SimpleMediaState> = _simpleMediaState.asStateFlow()
 
@@ -2956,7 +2955,6 @@ class JvmMediaPlayerHandlerImpl(
     override fun onPlayerError(error: PlayerError) {
         Logger.i("Offline", "error ${player.currentMediaItem?.mediaId} ${error.errorCode} ${error.errorCodeName}")
         Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")
-        if (error.errorCode != PlayerConstants.ERROR_CODE_TIMEOUT) pushPlayerError(error)
         // A track that cannot play moves the queue on rather than pausing it: offline, the
         // downloaded tracks further down still play. Same rules as the other platform's handler.
         when (val step = unplayableTrackSkipper.onError(player)) {

@@ -5,7 +5,6 @@ import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.player.GenericCommandButton
 import com.maxrave.domain.data.player.GenericMediaItem
-import com.maxrave.domain.data.player.PlayerError
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.utils.isEndlessQueueId
 import kotlinx.coroutines.flow.StateFlow
@@ -29,7 +28,6 @@ interface MediaPlayerHandler {
 
     // Listeners
     var onUpdateNotification: (List<GenericCommandButton>) -> Unit
-    var pushPlayerError: (PlayerError) -> Unit
     var showToast: (ToastType) -> Unit
 
     // Playback control
