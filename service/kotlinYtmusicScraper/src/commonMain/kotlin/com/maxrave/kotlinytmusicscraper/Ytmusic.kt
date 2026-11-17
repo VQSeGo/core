@@ -14,6 +14,7 @@ import com.maxrave.kotlinytmusicscraper.models.YouTubeLocale
 import com.maxrave.kotlinytmusicscraper.models.body.AccountMenuBody
 import com.maxrave.kotlinytmusicscraper.models.body.BrowseBody
 import com.maxrave.kotlinytmusicscraper.models.body.CreatePlaylistBody
+import com.maxrave.kotlinytmusicscraper.models.body.DeletePlaylistBody
 import com.maxrave.kotlinytmusicscraper.models.body.EditPlaylistBody
 import com.maxrave.kotlinytmusicscraper.models.body.FormData
 import com.maxrave.kotlinytmusicscraper.models.body.GetQueueBody
@@ -552,6 +553,18 @@ class Ytmusic {
             ),
         )
     }
+
+    /** Deletes one of the signed-in account's own playlists, as `delete_playlist` in ytmusicapi does. */
+    suspend fun deleteYouTubePlaylist(playlistId: String) =
+        httpClient.post("playlist/delete") {
+            ytClient(WEB_REMIX, setLogin = true)
+            setBody(
+                DeletePlaylistBody(
+                    context = WEB_REMIX.toContext(locale, visitorData),
+                    playlistId = playlistId.removePrefix("VL"),
+                ),
+            )
+        }
 
     suspend fun editYouTubePlaylist(
         playlistId: String,

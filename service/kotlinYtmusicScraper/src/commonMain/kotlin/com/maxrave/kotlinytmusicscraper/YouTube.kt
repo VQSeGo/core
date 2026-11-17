@@ -41,6 +41,7 @@ import com.maxrave.kotlinytmusicscraper.models.response.AccountSwitcherEndpointR
 import com.maxrave.kotlinytmusicscraper.models.response.AddItemYouTubePlaylistResponse
 import com.maxrave.kotlinytmusicscraper.models.response.BrowseResponse
 import com.maxrave.kotlinytmusicscraper.models.response.CreatePlaylistResponse
+import com.maxrave.kotlinytmusicscraper.models.response.EditPlaylistResponse
 import com.maxrave.kotlinytmusicscraper.models.response.ImageUploadResponse
 import com.maxrave.kotlinytmusicscraper.models.response.DownloadProgress
 import com.maxrave.kotlinytmusicscraper.models.response.GetQueueResponse
@@ -2119,7 +2120,13 @@ class YouTube {
         videoId: String,
         setVideoId: String,
     ) = runCatching {
-        ytMusic.removeItemYouTubePlaylist(playlistId, videoId, setVideoId).status.value
+        val response = ytMusic.removeItemYouTubePlaylist(playlistId, videoId, setVideoId)
+        // 200 does not mean the entry went: a refused edit says so only in the body's status.
+        val status = runCatching { response.body<EditPlaylistResponse>().status }.getOrNull()
+        if (status != null && status != "STATUS_SUCCEEDED") {
+            throw IllegalStateException("edit_playlist answered $status")
+        }
+        response.status.value
     }
 
     suspend fun addPlaylistItem(
@@ -2182,6 +2189,15 @@ class YouTube {
                 ).encryptedBlobId
         ytMusic.setYouTubePlaylistCustomThumbnail(playlistId, blobId).status.value
     }
+
+    /**
+     * Deletes one of the signed-in account's own playlists. Returns the HTTP status, the way
+     * [editPlaylist] does.
+     */
+    suspend fun deletePlaylist(playlistId: String) =
+        runCatching {
+            ytMusic.deleteYouTubePlaylist(playlistId).status.value
+        }
 
     suspend fun createPlaylist(
         title: String,
