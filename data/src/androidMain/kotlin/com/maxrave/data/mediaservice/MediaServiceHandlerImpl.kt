@@ -41,6 +41,7 @@ import com.maxrave.domain.data.player.PlayerConstants
 import com.maxrave.domain.data.player.PlayerError
 import com.maxrave.domain.data.player.ReverbEffect
 import com.maxrave.domain.data.player.ReverbPreset
+import com.maxrave.domain.extension.isAfter
 import com.maxrave.domain.extension.isVideo
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.extension.toGenericMediaItem
@@ -268,6 +269,14 @@ internal class MediaServiceHandlerImpl(
 
     private var jobWatchtime: Job? = null
 
+    /** Starts playback tracking once per play of a track; see [PlaybackTrackingGate]. */
+    private val playbackTrackingGate = PlaybackTrackingGate()
+    private var initPlaybackJob: Job? = null
+
+    /** The watch-time link and cpn that went out with the tracking start: later reports must use the same pair. */
+    private var trackingWatchtimeUrl: String? = null
+    private var trackingCpn: String? = null
+
     private var getDataOfNowPlayingTrackStateJob: Job? = null
 
     // Discord Rich Presence is pushed event-driven (song change, resume, seek, speed) instead of on
@@ -463,6 +472,18 @@ internal class MediaServiceHandlerImpl(
                                 Logger.d(TAG, "Collect format ${formatTemp.videoId}")
                                 Logger.d(TAG, "Format expire at ${formatTemp.expiredTime}")
                                 Logger.i(TAG, "AtrUrl ${formatTemp.playbackTrackingAtrUrl}")
+                                // A row left over from an earlier session is expired; the refreshed one
+                                // follows within seconds and must be the one that starts tracking.
+                                val stale = !formatTemp.expiredTime.isAfter(now())
+                                if (stale) {
+                                    Logger.i(TAG, "Tracking of ${formatTemp.videoId} waits for refreshed links")
+                                    delay(PlaybackTrackingGate.STALE_GRACE_MS)
+                                }
+                                if (!playbackTrackingGate.shouldStart(stale)) {
+                                    Logger.i(TAG, "Tracking of ${formatTemp.videoId} already started, skipping")
+                                    return@collectLatest
+                                }
+                                Logger.i(TAG, "Tracking of ${formatTemp.videoId} starts, links ${if (stale) "expired" else "fresh"}, cpn ${formatTemp.cpn}")
                                 initPlayback(
                                     formatTemp.playbackTrackingVideostatsPlaybackUrl,
                                     formatTemp.playbackTrackingAtrUrl,
@@ -582,6 +603,7 @@ internal class MediaServiceHandlerImpl(
             )
         }
         _format.value = null
+        playbackTrackingGate.reset()
         trackPlayedRecorded = false
         // Both subscriptions are swapped here, before the job below writes the song table: the
         // previous track's subscription used to stay alive until the end of that job, so every one
@@ -752,22 +774,26 @@ internal class MediaServiceHandlerImpl(
         cpn: String?,
     ) {
         jobWatchtime?.cancel()
-        coroutineScope.launch {
-            if (playback != null && atr != null && watchTime != null && cpn != null) {
-                watchTimeList = arrayListOf()
-                streamRepository
-                    .initPlayback(playback, atr, watchTime, cpn, queueData.value.data.playlistId)
-                    .collect {
-                        if (it.first == 204) {
-                            Logger.d("Check initPlayback", "Success")
-                            watchTimeList.add(0f)
-                            watchTimeList.add(5.54f)
-                            watchTimeList.add(it.second)
-                            updateWatchTime()
+        initPlaybackJob?.cancel()
+        initPlaybackJob =
+            coroutineScope.launch {
+                if (playback != null && atr != null && watchTime != null && cpn != null) {
+                    trackingWatchtimeUrl = watchTime
+                    trackingCpn = cpn
+                    watchTimeList = arrayListOf()
+                    streamRepository
+                        .initPlayback(playback, atr, watchTime, cpn, queueData.value.data.playlistId)
+                        .collect {
+                            if (it.first == 204) {
+                                Logger.d("Check initPlayback", "Success")
+                                watchTimeList.add(0f)
+                                watchTimeList.add(5.54f)
+                                watchTimeList.add(it.second)
+                                updateWatchTime()
+                            }
                         }
-                    }
+                }
             }
-        }
     }
 
     private fun updateWatchTime() {
@@ -780,9 +806,8 @@ internal class MediaServiceHandlerImpl(
                             if (value > 0 && watchTimeList.isNotEmpty()) {
                                 val second = (value / 1000).toFloat()
                                 if (second in watchTimeList.last()..watchTimeList.last() + 1.2f) {
-                                    val watchTimeUrl =
-                                        _format.value?.playbackTrackingVideostatsWatchtimeUrl
-                                    val cpn = _format.value?.cpn
+                                    val watchTimeUrl = trackingWatchtimeUrl
+                                    val cpn = trackingCpn
                                     if (second + 20.23f < (player.duration / 1000).toFloat()) {
                                         watchTimeList.add(second + 20.23f)
                                         if (watchTimeUrl != null && cpn != null) {
