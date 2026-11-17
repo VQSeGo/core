@@ -19,7 +19,6 @@ import com.maxrave.domain.data.model.browse.playlist.Author
 import com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse
 import com.maxrave.domain.data.model.searchResult.playlists.PlaylistsResult
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
-import com.maxrave.domain.data.type.ChartItem
 import com.maxrave.domain.data.type.PlaylistType
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
@@ -1003,25 +1002,5 @@ internal class PlaylistRepositoryImpl(
     override fun getYourYouTubePlaylistList(emailPageId: String): Flow<YourYouTubePlaylistList?> =
         flow {
             emit(localDataSource.getYourYouTubePlaylistList(emailPageId))
-        }.flowOn(Dispatchers.IO)
-
-    override fun getChartPlaylist(): Flow<Resource<List<ChartItem>>> =
-        flow {
-            youTube
-                .getSimpMusicChart()
-                .onSuccess { response ->
-                    val data = response.data?.filterNotNull() ?: emptyList()
-                    val result =
-                        data.mapNotNull {
-                            ChartItem(
-                                name = it.name ?: return@mapNotNull null,
-                                ytPlaylistId = it.youtubePlaylistId ?: return@mapNotNull null,
-                            )
-                        }
-                    emit(Resource.Success(result))
-                }.onFailure { exception ->
-                    Logger.e("PlaylistRepositoryImpl", "getChartPlaylist failed: ${exception.message}", exception)
-                    emit(Resource.Error<List<ChartItem>>(exception.message ?: "Unknown error"))
-                }
         }.flowOn(Dispatchers.IO)
 }

@@ -567,7 +567,6 @@ object MERGING_DATA_TYPE {
 enum class LibraryChipType {
     YOUR_LIBRARY,
     WRAPPED,
-    CHART,
     YOUTUBE_MUSIC_PLAYLIST,
     YOUTUBE_MIX_FOR_YOU,
     LOCAL_PLAYLIST,
@@ -583,7 +582,6 @@ enum class LibraryChipType {
             LOCAL_PLAYLIST -> "local_playlist"
             FAVORITE_PLAYLIST -> "favorite_playlist"
             DOWNLOADED_PLAYLIST -> "downloaded_playlist"
-            CHART -> "chart"
             WRAPPED -> "wrapped"
         }
 
@@ -596,7 +594,6 @@ enum class LibraryChipType {
                 "local_playlist" -> LOCAL_PLAYLIST
                 "favorite_playlist" -> FAVORITE_PLAYLIST
                 "downloaded_playlist" -> DOWNLOADED_PLAYLIST
-                "chart" -> CHART
                 "wrapped" -> WRAPPED
                 else -> null
             }
