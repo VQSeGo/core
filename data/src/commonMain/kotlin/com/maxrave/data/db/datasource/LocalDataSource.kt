@@ -416,6 +416,8 @@ internal class LocalDataSource(
         playlistId: String,
     ) = databaseDao.updatePlaylistDownloadState(downloadState, playlistId)
 
+    fun observeAllLocalPlaylists() = databaseDao.observeAllLocalPlaylists()
+
     suspend fun getAllLocalPlaylists(
         limit: Int,
         offset: Int,

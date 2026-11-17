@@ -72,6 +72,9 @@ internal class LocalPlaylistRepositoryImpl(
             emit(list)
         }.flowOn(Dispatchers.IO)
 
+    override fun observeAllLocalPlaylists(): Flow<List<LocalPlaylistEntity>> =
+        localDataSource.observeAllLocalPlaylists().flowOn(Dispatchers.IO)
+
     override suspend fun updateLocalPlaylistTracks(
         tracks: List<String>,
         id: Long,

@@ -17,6 +17,9 @@ interface LocalPlaylistRepository {
 
     fun getAllLocalPlaylists(): Flow<List<LocalPlaylistEntity>>
 
+    /** The same list, but a Room query that emits again whenever a playlist is added, changed or removed. */
+    fun observeAllLocalPlaylists(): Flow<List<LocalPlaylistEntity>>
+
     suspend fun updateLocalPlaylistTracks(
         tracks: List<String>,
         id: Long,

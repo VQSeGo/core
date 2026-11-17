@@ -688,6 +688,9 @@ interface DatabaseDao {
     ): List<PlaylistEntity>
 
     // Local Playlist
+    @Query("SELECT * FROM local_playlist ORDER BY inLibrary DESC")
+    fun observeAllLocalPlaylists(): Flow<List<LocalPlaylistEntity>>
+
     @Query("SELECT * FROM local_playlist ORDER BY inLibrary DESC LIMIT :limit OFFSET :offset")
     suspend fun getAllLocalPlaylists(
         limit: Int,
