@@ -13,4 +13,6 @@ data class PlaylistState(
     val trackCount: Int = 0,
     val radioEndpoint: YouTubeWatchEndpoint? = null,
     val shuffleEndpoint: YouTubeWatchEndpoint? = null,
+    /** See [PlaylistBrowse.isOwned]; false until the network has answered. */
+    val isOwned: Boolean = false,
 )

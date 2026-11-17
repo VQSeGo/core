@@ -389,6 +389,10 @@ internal class LocalDataSource(
 
     suspend fun insertAndReplacePlaylist(playlist: PlaylistEntity) = databaseDao.insertAndReplacePlaylist(playlist)
 
+    suspend fun deletePlaylists(playlistIds: List<String>) = databaseDao.deletePlaylists(playlistIds)
+
+    suspend fun deleteSetVideoIdsOfPlaylist(youtubePlaylistIds: List<String>) = databaseDao.deleteSetVideoIdsOfPlaylist(youtubePlaylistIds)
+
     suspend fun insertRadioPlaylist(playlist: PlaylistEntity) = databaseDao.insertRadioPlaylist(playlist)
 
     suspend fun updatePlaylistLiked(

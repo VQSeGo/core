@@ -29,4 +29,9 @@ data class Track(
      * up with view counts. Defaulted so existing persisted queue JSON still decodes.
      */
     val views: String? = null,
+    /**
+     * This entry's id inside the YouTube playlist it was read from, which `edit_playlist` needs to
+     * remove or move it. Null for a track that did not come from a playlist page.
+     */
+    val setVideoId: String? = null,
 )

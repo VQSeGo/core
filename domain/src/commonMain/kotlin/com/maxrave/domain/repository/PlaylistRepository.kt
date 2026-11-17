@@ -10,6 +10,7 @@ import com.maxrave.domain.data.type.ChartItem
 import com.maxrave.domain.data.type.PlaylistType
 import com.maxrave.domain.utils.Resource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.datetime.LocalDateTime
 
 interface PlaylistRepository {
@@ -89,6 +90,34 @@ interface PlaylistRepository {
         playlistId: String,
         newTitle: String,
     ): Flow<Resource<String>>
+
+    /**
+     * Creates a private playlist named [title] in the signed-in account. It is saved here as a
+     * favourite at once and shows in the account's playlist list from then on. Success carries the
+     * new playlist's id.
+     */
+    fun createYouTubePlaylist(title: String): Flow<Resource<String>>
+
+    /**
+     * Deletes one of the account's own playlists from YouTube, then everything kept of it here: the
+     * saved copy, its entry ids, its place in the cached list of the account's playlists, and the
+     * link of any local playlist synced to it.
+     */
+    fun deleteYouTubePlaylist(playlistId: String): Flow<Resource<String>>
+
+    /**
+     * Removes the entry [setVideoId] (song [videoId]) from one of the account's own playlists. A null
+     * [setVideoId] is looked up from the playlist first. The saved copy loses the song too. Success
+     * carries the setVideoId that was removed.
+     */
+    fun removeYouTubePlaylistItem(
+        playlistId: String,
+        videoId: String,
+        setVideoId: String?,
+    ): Flow<Resource<String>>
+
+    /** Goes up by one whenever the app creates or deletes one of the account's playlists. */
+    val youTubePlaylistsVersion: StateFlow<Int>
 
     suspend fun insertYourYouTubePlaylist(yourYouTubePlaylist: YourYouTubePlaylistList)
 

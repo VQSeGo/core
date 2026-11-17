@@ -10,6 +10,7 @@ import com.maxrave.domain.data.model.searchResult.songs.Artist
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.utils.LIVE_RESULT_TYPE
+import com.maxrave.kotlinytmusicscraper.models.MusicResponsiveListItemRenderer
 import com.maxrave.kotlinytmusicscraper.models.MusicShelfRenderer
 import com.maxrave.kotlinytmusicscraper.models.SectionListRenderer
 import com.maxrave.kotlinytmusicscraper.models.response.BrowseResponse
@@ -330,6 +331,7 @@ internal fun parsePlaylistData(
                     feedbackTokens = null,
                     resultType = if (renderer?.isLive == true) LIVE_RESULT_TYPE else null,
                     year = null,
+                    setVideoId = renderer?.let { playlistSetVideoId(it) },
                 )
             if (track.videoId != "") {
                 listTrack.add(track)
@@ -355,6 +357,23 @@ internal fun parsePlaylistData(
         return null
     }
 }
+
+/**
+ * The entry id of a playlist row: from its "remove from playlist" menu item, which only the owner's
+ * rows carry, else from the row's playlist data.
+ */
+private fun playlistSetVideoId(renderer: MusicResponsiveListItemRenderer): String? =
+    renderer.menu
+        ?.menuRenderer
+        ?.items
+        ?.find { it.menuServiceItemRenderer?.icon?.iconType == "REMOVE_FROM_PLAYLIST" }
+        ?.menuServiceItemRenderer
+        ?.serviceEndpoint
+        ?.playlistEditEndpoint
+        ?.actions
+        ?.firstOrNull()
+        ?.setVideoId
+        ?: renderer.playlistItemData?.playlistSetVideoId
 
 internal fun parseSetVideoId(
     playlistId: String,

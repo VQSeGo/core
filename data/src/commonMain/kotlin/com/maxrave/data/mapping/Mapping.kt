@@ -52,6 +52,7 @@ internal fun SongItem.toTrack(): Track =
         feedbackTokens = null,
         resultType = if (this.isLive) LIVE_RESULT_TYPE else null,
         year = null,
+        setVideoId = this.setVideoId,
     )
 
 internal fun VideoItem.toTrack(): Track =

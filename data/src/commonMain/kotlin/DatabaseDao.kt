@@ -630,6 +630,10 @@ interface DatabaseDao {
         favoriteAt: LocalDateTime? = if (liked == 1) now() else null,
     )
 
+    /** Pass every spelling the id may be stored under (with and without "VL"). */
+    @Query("DELETE FROM playlist WHERE id IN (:playlistIds)")
+    suspend fun deletePlaylists(playlistIds: List<String>): Int
+
     @Query("UPDATE playlist SET inLibrary = :inLibrary WHERE id = :playlistId")
     suspend fun updatePlaylistInLibrary(
         inLibrary: LocalDateTime,
@@ -849,6 +853,9 @@ interface DatabaseDao {
         videoId: String,
         youtubePlaylistIds: List<String>,
     ): SetVideoIdEntity?
+
+    @Query("DELETE FROM set_video_id WHERE youtubePlaylistId IN (:youtubePlaylistIds)")
+    suspend fun deleteSetVideoIdsOfPlaylist(youtubePlaylistIds: List<String>): Int
 
     @Query("DELETE FROM set_video_id WHERE videoId = :videoId AND youtubePlaylistId = :youtubePlaylistId")
     suspend fun deleteSetVideoId(

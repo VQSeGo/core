@@ -8,6 +8,7 @@ import com.maxrave.data.mapping.toYouTubeWatchEndpoint
 import com.maxrave.data.parser.parseLibraryPlaylist
 import com.maxrave.data.parser.parseNextLibraryPlaylist
 import com.maxrave.data.parser.parsePlaylistData
+import com.maxrave.data.parser.parseSetVideoId
 import com.maxrave.domain.data.entities.ArtistEntity
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SetVideoIdEntity
@@ -34,17 +35,25 @@ import com.maxrave.kotlinytmusicscraper.pages.NextPage
 import com.maxrave.kotlinytmusicscraper.parser.getPlaylistContinuation
 import com.maxrave.kotlinytmusicscraper.parser.getPlaylistRadioEndpoint
 import com.maxrave.kotlinytmusicscraper.parser.getPlaylistShuffleEndpoint
+import com.maxrave.kotlinytmusicscraper.parser.playlistContinuationContents
 import com.maxrave.logger.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.lastOrNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
+
+private const val TAG = "PlaylistRepositoryImpl"
 
 internal class PlaylistRepositoryImpl(
     private val dataStoreManager: DataStoreManager,
@@ -544,6 +553,21 @@ internal class PlaylistRepositoryImpl(
                                     ?.header
                                     ?.musicResponsiveHeaderRenderer
                         Logger.d("getPlaylistData") { "header: ${Logger.clip(header)}" }
+                        // YouTube sends the editable header only to the playlist's owner (ytmusicapi
+                        // reads `owned` the same way); a saved playlist of someone else's has the
+                        // plain one, even though its rows carry entry ids too.
+                        val isOwned =
+                            result.header?.musicEditablePlaylistDetailHeaderRenderer != null ||
+                                result.contents
+                                    ?.twoColumnBrowseResultsRenderer
+                                    ?.tabs
+                                    ?.firstOrNull()
+                                    ?.tabRenderer
+                                    ?.content
+                                    ?.sectionListRenderer
+                                    ?.contents
+                                    ?.firstOrNull()
+                                    ?.musicEditablePlaylistDetailHeaderRenderer != null
                         val continueParam =
                             result.getPlaylistContinuation()
                         val radioEndpoint =
@@ -564,6 +588,7 @@ internal class PlaylistRepositoryImpl(
                                                 trackCount = (playlist.trackCount + listContent.size),
                                                 shuffleEndpoint = shuffleEndpoint?.toYouTubeWatchEndpoint(),
                                                 radioEndpoint = radioEndpoint?.toYouTubeWatchEndpoint(),
+                                                isOwned = isOwned,
                                             ),
                                             continueParam,
                                         ),
@@ -594,6 +619,9 @@ internal class PlaylistRepositoryImpl(
         }.flowOn(Dispatchers.IO)
 
     override fun getLibraryPlaylist(): Flow<List<PlaylistsResult>?> =
+        libraryPlaylistsFromNetwork().map { list -> withLocalPlaylistChanges(list) }
+
+    private fun libraryPlaylistsFromNetwork(): Flow<List<PlaylistsResult>?> =
         flow {
             youTube
                 .getLibraryPlaylists()
@@ -792,6 +820,175 @@ internal class PlaylistRepositoryImpl(
                     emit(Resource.Error<String>(it.message ?: "Unknown error"))
                 }
         }.flowOn(Dispatchers.IO)
+
+    // What this run of the app created and deleted in the account. YouTube's list of the account's
+    // playlists can lag behind a create or a delete for a while; these keep the lists in the app
+    // right in the meantime. Keyed by the id without "VL".
+    private val createdPlaylists = MutableStateFlow<Map<String, PlaylistsResult>>(emptyMap())
+    private val deletedPlaylistIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _youTubePlaylistsVersion = MutableStateFlow(0)
+    override val youTubePlaylistsVersion: StateFlow<Int> = _youTubePlaylistsVersion.asStateFlow()
+
+    private fun withLocalPlaylistChanges(list: List<PlaylistsResult>?): List<PlaylistsResult>? {
+        val deleted = deletedPlaylistIds.value
+        val created = createdPlaylists.value
+        if (deleted.isEmpty() && created.isEmpty()) return list
+        val kept = list.orEmpty().filterNot { it.browseId.removePrefix("VL") in deleted }
+        val listed = kept.map { it.browseId.removePrefix("VL") }.toSet()
+        val missing = created.filterKeys { it !in listed && it !in deleted }.values
+        return if (list == null && missing.isEmpty()) null else missing.toList() + kept
+    }
+
+    override fun createYouTubePlaylist(title: String): Flow<Resource<String>> =
+        flow {
+            youTube
+                .createPlaylist(title, null)
+                .onSuccess { response ->
+                    val id = response.playlistId.removePrefix("VL")
+                    val author = localDataSource.getUsedGoogleAccount()?.name.orEmpty()
+                    Logger.i(TAG, "createYouTubePlaylist: created $id")
+                    // Saved as a favourite, which is what puts it on the Desktop sidebar and under
+                    // the favourites; the network fills the rest when it is opened.
+                    localDataSource.insertAndReplacePlaylist(
+                        PlaylistEntity(
+                            id = id,
+                            author = author,
+                            title = title,
+                            privacy = "PRIVATE",
+                            trackCount = 0,
+                            tracks = emptyList(),
+                            year = now().year.toString(),
+                            liked = true,
+                            favoriteAt = now(),
+                        ),
+                    )
+                    deletedPlaylistIds.update { it - id }
+                    createdPlaylists.update {
+                        it +
+                            (
+                                id to
+                                    PlaylistsResult(
+                                        author = author,
+                                        browseId = "VL$id",
+                                        category = "",
+                                        itemCount = "0",
+                                        resultType = "",
+                                        thumbnails = emptyList(),
+                                        title = title,
+                                    )
+                            )
+                    }
+                    _youTubePlaylistsVersion.update { it + 1 }
+                    emit(Resource.Success(id))
+                }.onFailure { e ->
+                    Logger.e(TAG, "createYouTubePlaylist failed: ${e.message}", e)
+                    emit(Resource.Error<String>(e.message ?: "Unknown error"))
+                }
+        }.flowOn(Dispatchers.IO)
+
+    override fun deleteYouTubePlaylist(playlistId: String): Flow<Resource<String>> =
+        flow {
+            val id = playlistId.removePrefix("VL")
+            youTube
+                .deletePlaylist(id)
+                .onSuccess { status ->
+                    Logger.i(TAG, "deleteYouTubePlaylist: deleted $id (HTTP $status)")
+                    forgetYouTubePlaylist(id)
+                    emit(Resource.Success(id))
+                }.onFailure { e ->
+                    Logger.e(TAG, "deleteYouTubePlaylist $id failed: ${e.message}", e)
+                    emit(Resource.Error<String>(e.message ?: "Unknown error"))
+                }
+        }.flowOn(Dispatchers.IO)
+
+    /** Everything kept here of a playlist that is gone from the account. */
+    private suspend fun forgetYouTubePlaylist(id: String) {
+        val spellings = listOf(id, "VL$id")
+        val rows = localDataSource.deletePlaylists(spellings)
+        localDataSource.deleteSetVideoIdsOfPlaylist(spellings)
+        // A local playlist synced to it would go on syncing into a playlist that no longer exists.
+        spellings.forEach { spelling ->
+            localDataSource.getLocalPlaylistByYoutubePlaylistId(spelling)?.let { local ->
+                localDataSource.unsyncLocalPlaylist(local.id)
+            }
+        }
+        val account = localDataSource.getUsedGoogleAccount()
+        if (account != null) {
+            val emailPageId = "${account.email}_${account.pageId ?: ""}"
+            localDataSource.getYourYouTubePlaylistList(emailPageId)?.let { index ->
+                val left = index.listBrowseIds.filterNot { it.removePrefix("VL") == id }
+                if (left.size != index.listBrowseIds.size) {
+                    localDataSource.insertYourYouTubePlaylist(index.copy(listBrowseIds = left))
+                }
+            }
+        }
+        createdPlaylists.update { it - id }
+        deletedPlaylistIds.update { it + id }
+        _youTubePlaylistsVersion.update { it + 1 }
+        Logger.i(TAG, "deleteYouTubePlaylist: $id forgotten locally ($rows saved rows)")
+    }
+
+    override fun removeYouTubePlaylistItem(
+        playlistId: String,
+        videoId: String,
+        setVideoId: String?,
+    ): Flow<Resource<String>> =
+        flow {
+            val id = playlistId.removePrefix("VL")
+            val entry = setVideoId ?: findSetVideoIdOnline(id, videoId)
+            if (entry == null) {
+                Logger.w(TAG, "removeYouTubePlaylistItem: no entry id for $videoId in $id")
+                emit(Resource.Error<String>("No setVideoId for $videoId"))
+                return@flow
+            }
+            youTube
+                .removeItemYouTubePlaylist(id, videoId, entry)
+                .onSuccess {
+                    // The saved copy loses the song too, so the next open does not show it from
+                    // there before the network answers.
+                    localDataSource.getPlaylist(id)?.let { saved ->
+                        val tracks = saved.tracks?.toMutableList()
+                        if (tracks != null && tracks.remove(videoId)) {
+                            localDataSource.insertAndReplacePlaylist(
+                                saved.copy(tracks = tracks, trackCount = (saved.trackCount - 1).coerceAtLeast(0)),
+                            )
+                        }
+                    }
+                    listOf(id, "VL$id").forEach { localDataSource.deleteSetVideoId(videoId, it) }
+                    Logger.i(TAG, "removeYouTubePlaylistItem: removed $videoId from $id, saved copy updated")
+                    emit(Resource.Success(entry))
+                }.onFailure { e ->
+                    Logger.e(TAG, "removeYouTubePlaylistItem $videoId from $id failed: ${e.message}", e)
+                    emit(Resource.Error<String>(e.message ?: "Unknown error"))
+                }
+        }.flowOn(Dispatchers.IO)
+
+    /** Pages through playlist [id] until the row of [videoId] turns up, for its entry id. */
+    private suspend fun findSetVideoIdOnline(
+        id: String,
+        videoId: String,
+    ): String? {
+        val first = youTube.customQuery(browseId = "VL$id", setLogin = true).getOrNull() ?: return null
+        var rows =
+            first.contents
+                ?.twoColumnBrowseResultsRenderer
+                ?.secondaryContents
+                ?.sectionListRenderer
+                ?.contents
+                ?.firstOrNull()
+                ?.musicPlaylistShelfRenderer
+                ?.contents
+                .orEmpty()
+        var continuation = first.getPlaylistContinuation()
+        val seen = mutableSetOf<String>()
+        while (true) {
+            parseSetVideoId(id, rows).firstOrNull { it.videoId == videoId }?.setVideoId?.let { return it }
+            val next = continuation?.takeIf { seen.add(it) } ?: return null
+            val page = youTube.customQuery("", continuation = next, setLogin = true).getOrNull() ?: return null
+            rows = page.playlistContinuationContents().orEmpty()
+            continuation = page.getPlaylistContinuation()
+        }
+    }
 
     override suspend fun insertYourYouTubePlaylist(yourYouTubePlaylist: YourYouTubePlaylistList) =
         withContext(Dispatchers.IO) {
