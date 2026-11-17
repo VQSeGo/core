@@ -68,7 +68,7 @@ class DiscordRpc(
         val endTime = now + ((durationMillis - currentPlaybackTimeMillis) / playbackSpeed).toLong()
         val buttons =
             listOf(
-                "Listen on SimpMusic" to "https://simpmusic.org/app/watch?v=${song.videoId}",
+                "Listen on YouTube Music" to "https://music.youtube.com/watch?v=${song.videoId}",
                 "Visit SimpMusic" to "https://github.com/VQSeGo/SimpMusic",
             )
         gateway.sendPresence(
