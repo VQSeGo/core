@@ -506,13 +506,6 @@ class Ytmusic {
         )
     }
 
-    suspend fun pipedStreams(
-        videoId: String,
-        pipedInstance: String,
-    ) = httpClient.get("$pipedInstance/streams/$videoId") {
-        contentType(ContentType.Application.Json)
-    }
-
     suspend fun getSuggestQuery(query: String) =
         httpClient.get("http://suggestqueries.google.com/complete/search") {
             contentType(ContentType.Application.Json)

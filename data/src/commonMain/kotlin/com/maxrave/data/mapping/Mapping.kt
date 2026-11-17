@@ -24,7 +24,6 @@ import com.maxrave.kotlinytmusicscraper.models.SongItem
 import com.maxrave.kotlinytmusicscraper.models.VideoItem
 import com.maxrave.kotlinytmusicscraper.models.WatchEndpoint
 import com.maxrave.kotlinytmusicscraper.models.YTItem
-import com.maxrave.kotlinytmusicscraper.models.response.PipedResponse
 import com.maxrave.kotlinytmusicscraper.models.youtube.Transcript
 import com.maxrave.kotlinytmusicscraper.models.youtube.YouTubeInitialPage
 import com.maxrave.spotify.model.response.spotify.SpotifyLyricsResponse
@@ -168,39 +167,6 @@ internal fun SpotifyLyricsResponse.toLyrics(): Lyrics {
         syncType = this.lyrics.syncType,
     )
 }
-
-internal fun PipedResponse.toTrack(videoId: String): Track =
-    Track(
-        album = null,
-        artists =
-            listOf(
-                Artist(
-                    this.uploaderUrl?.replace("/channel/", ""),
-                    this.uploader.toString(),
-                ),
-            ),
-        duration = "",
-        durationSeconds = 0,
-        isAvailable = false,
-        isExplicit = false,
-        likeStatus = "INDIFFERENT",
-        thumbnails =
-            listOf(
-                Thumbnail(
-                    720,
-                    this.thumbnailUrl ?: "https://i.ytimg.com/vi/$videoId/maxresdefault.jpg",
-                    1080,
-                ),
-            ),
-        title = this.title ?: " ",
-        videoId = videoId,
-        // Piped is not YouTube Music and never reports musicVideoType.
-        videoType = null,
-        category = "",
-        feedbackTokens = null,
-        resultType = null,
-        year = "",
-    )
 
 internal fun YouTubeInitialPage.toTrack(): Track {
     val initialPage = this

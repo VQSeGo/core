@@ -3,7 +3,6 @@ package com.maxrave.kotlinytmusicscraper
 import com.eygraber.uri.toKmpUri
 import com.maxrave.common.ITAG
 import com.maxrave.kotlinytmusicscraper.YouTube.Companion.DEFAULT_VISITOR_DATA
-import com.maxrave.kotlinytmusicscraper.extension.toListFormat
 import com.maxrave.kotlinytmusicscraper.extractor.ExtractSource
 import com.maxrave.kotlinytmusicscraper.extractor.contentLengthOf
 import com.maxrave.kotlinytmusicscraper.extractor.orderByAudioTrack
@@ -48,7 +47,6 @@ import com.maxrave.kotlinytmusicscraper.models.response.GetSearchSuggestionsResp
 import com.maxrave.kotlinytmusicscraper.models.response.LikeStatus
 import com.maxrave.kotlinytmusicscraper.models.response.NextAndroidMusicResponse
 import com.maxrave.kotlinytmusicscraper.models.response.NextResponse
-import com.maxrave.kotlinytmusicscraper.models.response.PipedResponse
 import com.maxrave.kotlinytmusicscraper.models.response.PlayerResponse
 import com.maxrave.kotlinytmusicscraper.models.response.SearchResponse
 import com.maxrave.kotlinytmusicscraper.models.response.toLikeStatus
@@ -242,18 +240,6 @@ class YouTube {
             Logger.e("YouTube", "setProxy failed: ${it.message}", it)
         }
     }
-
-    private val listPipedInstances =
-        listOf(
-            "https://pipedapi.nosebs.ru",
-            "https://pipedapi.kavin.rocks",
-            "https://pipedapi.tokhmi.xyz",
-            "https://pipedapi.syncpundit.io",
-            "https://pipedapi.leptons.xyz",
-            "https://pipedapi.r4fo.com",
-            "https://yapi.vyper.me",
-            "https://pipedapi-libre.kavin.rocks",
-        )
 
     /**
      * Search for a song, album, artist, playlist, etc.
@@ -2001,13 +1987,6 @@ class YouTube {
             Logger.d(TAG, "Account List Response: $accountSwitcherEndpointResponse")
             accountSwitcherEndpointResponse.toListAccountInfo()
         }
-
-    suspend fun pipeStream(
-        videoId: String,
-        pipedInstance: String,
-    ) = runCatching {
-        ytMusic.pipedStreams(videoId, pipedInstance).body<PipedResponse>()
-    }
 
     suspend fun getLibraryPlaylists() =
         runCatching {
