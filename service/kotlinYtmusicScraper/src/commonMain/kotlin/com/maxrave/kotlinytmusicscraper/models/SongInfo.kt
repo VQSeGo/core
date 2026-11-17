@@ -8,7 +8,4 @@ data class SongInfo(
     val description: String? = null,
     val uploadDate: String? = null,
     val subscribers: String? = null,
-    val viewCount: Long? = null,
-    val like: Long? = null,
-    val dislike: Long? = null,
 )

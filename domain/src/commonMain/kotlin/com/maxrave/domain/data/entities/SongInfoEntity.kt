@@ -3,6 +3,8 @@ package com.maxrave.domain.data.entities
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+// viewCount, like and dislike came only from Return YouTube Dislike (removed) and are no longer written or read;
+// the columns stay so the Room schema does not change.
 @Entity(tableName = "song_info")
 data class SongInfoEntity(
     @PrimaryKey(autoGenerate = false) val videoId: String,

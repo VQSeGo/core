@@ -620,9 +620,6 @@ internal class SongRepositoryImpl(
                                 description = songInfo.description,
                                 uploadDate = songInfo.uploadDate,
                                 subscribers = songInfo.subscribers,
-                                viewCount = songInfo.viewCount,
-                                like = songInfo.like,
-                                dislike = songInfo.dislike,
                             )
                         emit(song)
                         insertSongInfo(
