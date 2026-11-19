@@ -39,6 +39,8 @@ import com.maxrave.domain.extension.isVideo
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.player.CrossfadeExclusions
+import com.maxrave.domain.mediaservice.player.DownloadedClip
+import com.maxrave.domain.mediaservice.player.DownloadedClips
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.mediaservice.player.MediaPlayerListener
 import com.maxrave.domain.mediaservice.player.MusicEnd
@@ -66,7 +68,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -152,9 +157,14 @@ internal class CrossfadeExoPlayerAdapter(
             }
         }
         coroutineScope.launch {
+            // The first value can arrive before the fields refreshDownloadedClip reads exist; nothing
+            // plays yet then anyway.
+            var first = true
             dataStoreManager.watchVideoInsteadOfPlayingAudio.collect { enabled ->
                 watchVideoEnabled = (enabled == DataStoreManager.TRUE)
                 Logger.d(TAG, "Watch video enabled: $watchVideoEnabled")
+                if (!first) refreshDownloadedClip()
+                first = false
             }
         }
         coroutineScope.launch {
@@ -462,6 +472,90 @@ internal class CrossfadeExoPlayerAdapter(
 
     private val playlist = mutableListOf<GenericMediaItem>()
     private var localCurrentMediaItemIndex = -1
+
+    // ========== Downloaded clip shown from the network ==========
+    // The request itself lives in MergingMediaSourceFactory.streamedClipId, where the source is built.
+
+    private val _downloadedClip = MutableStateFlow<DownloadedClip?>(null)
+    override val downloadedClip: StateFlow<DownloadedClip?> = _downloadedClip.asStateFlow()
+
+    private val _downloadedClipFailures = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val downloadedClipFailures: SharedFlow<Unit> = _downloadedClipFailures
+
+    /**
+     * Re-reads [downloadedClip] for the current track, and drops the streamed clip once another track
+     * is current, so the request never outlives its track.
+     */
+    private fun refreshDownloadedClip() {
+        val item = playlist.getOrNull(localCurrentMediaItemIndex)
+        mediaSourceFactory.streamedClipId = DownloadedClips.carriedOver(mediaSourceFactory.streamedClipId, item?.mediaId)
+        _downloadedClip.value =
+            item?.let {
+                DownloadedClips.stateOf(
+                    mediaId = it.mediaId,
+                    watchVideoEnabled = watchVideoEnabled,
+                    itemIsVideo = it.isVideo(),
+                    audioOnlyDownload = mediaSourceFactory.isAudioOnlyDownload(it.mediaId),
+                    streamedClipId = mediaSourceFactory.streamedClipId,
+                )
+            }
+    }
+
+    override fun showDownloadedClip(show: Boolean) {
+        coroutineScope.launch {
+            val clip = _downloadedClip.value
+            val videoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId
+            if (clip == null || clip.mediaId != videoId || clip.shown == show) return@launch
+            // A crossfade is about to make another track current: nothing to switch.
+            if (isCrossfading) return@launch
+            if (show) {
+                // Asked before the switch: the playing file is not given up for a video that cannot
+                // be had, and the resolver below finds the answer saved.
+                _downloadedClip.value = clip.copy(shown = true)
+                val videoUrl =
+                    try {
+                        withTimeoutOrNull(DOWNLOADED_CLIP_RESOLVE_TIMEOUT_MS) {
+                            streamRepository
+                                .getStream(dataStoreManager, videoId, isDownloading = false, isVideo = true)
+                                .firstOrNull { it != null }
+                        }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Logger.w(TAG, "Video of the downloaded clip $videoId failed: ${e.message}")
+                        null
+                    }
+                if (videoUrl == null || playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId != videoId) {
+                    if (videoUrl == null) {
+                        Logger.w(TAG, "No video for the downloaded clip $videoId, staying on the file")
+                        _downloadedClipFailures.tryEmit(Unit)
+                    }
+                    refreshDownloadedClip()
+                    return@launch
+                }
+            }
+            Logger.i(TAG, "downloaded clip $videoId: ${if (show) "streaming its video" else "back to the file"}")
+            switchDownloadedClip(videoId, show)
+        }
+    }
+
+    /** Reloads the current track with or without its streamed video, at the position it has reached. */
+    private fun switchDownloadedClip(
+        videoId: String,
+        show: Boolean,
+    ) {
+        mediaSourceFactory.streamedClipId = if (show) videoId else null
+        retryVideoId = null
+        retryCount = 0
+        precachedPlayers.remove(videoId)?.player?.release()
+        val positionMs = currentPlayer?.currentPosition?.takeIf { it > 0 } ?: cachedPosition
+        loadAndPlayTrackInternal(
+            localCurrentMediaItemIndex,
+            positionMs.coerceAtLeast(0L),
+            shouldPlay = internalPlayWhenReady,
+            // Still the same track: announcing it would log a second listen.
+            announceTransition = false,
+        )
+    }
 
     // Shuffle management
     private var shuffleIndices = mutableListOf<Int>()
@@ -1643,6 +1737,7 @@ internal class CrossfadeExoPlayerAdapter(
         index: Int,
         startPositionMs: Long,
         shouldPlay: Boolean,
+        announceTransition: Boolean = true,
     ) {
         if (index !in playlist.indices) return
 
@@ -1659,12 +1754,15 @@ internal class CrossfadeExoPlayerAdapter(
                     transitionToState(InternalState.PREPARING)
 
                     // Notify media item transition
-                    listeners.forEach {
-                        it.onMediaItemTransition(
-                            mediaItem,
-                            PlayerConstants.MEDIA_ITEM_TRANSITION_REASON_AUTO,
-                        )
+                    if (announceTransition) {
+                        listeners.forEach {
+                            it.onMediaItemTransition(
+                                mediaItem,
+                                PlayerConstants.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                            )
+                        }
                     }
+                    refreshDownloadedClip()
 
                     // Use precached player if available and healthy. One that already failed is
                     // dropped and the track is built afresh: this also covers a live broadcast, whose
@@ -1856,6 +1954,14 @@ internal class CrossfadeExoPlayerAdapter(
                     val isRetryableSourceError = error.isRetryableSourceError()
 
                     val currentVideoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId
+                    // A downloaded clip watched from the network: back to the file at the same place.
+                    // Never the heal below, the downloaded audio is not what failed.
+                    if (currentVideoId != null && currentVideoId == mediaSourceFactory.streamedClipId) {
+                        Logger.w(TAG, "Video of the downloaded clip $currentVideoId failed (${error.errorCodeName}), back to the file")
+                        _downloadedClipFailures.tryEmit(Unit)
+                        coroutineScope.launch { switchDownloadedClip(currentVideoId, show = false) }
+                        return
+                    }
                     // The progressive resolver found this track to be a live broadcast. Loading it
                     // again builds an HLS source instead — see LiveStreamDetectedException. Not a
                     // retry, and not counted as one: it is a different source, not the same one again.
@@ -2263,6 +2369,7 @@ internal class CrossfadeExoPlayerAdapter(
                 crossfadeFromIndex = localCurrentMediaItemIndex
                 localCurrentMediaItemIndex = nextIndex
                 unpinCurrent()
+                refreshDownloadedClip()
 
                 // Notify our custom listeners IMMEDIATELY (UI updates to new track)
                 listeners.forEach {
@@ -2392,6 +2499,9 @@ internal class CrossfadeExoPlayerAdapter(
     companion object {
         /** Floor for the shortest track worth crossfading, in ms. */
         private const val MIN_CROSSFADE_TRACK_MS = 20_000L
+
+        /** How long "show clip" waits for the video's URL before it stays on the file. */
+        private const val DOWNLOADED_CLIP_RESOLVE_TIMEOUT_MS = 15_000L
     }
 
 

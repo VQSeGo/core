@@ -16,6 +16,8 @@ import com.maxrave.domain.extension.isVideo
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.player.CrossfadeExclusions
+import com.maxrave.domain.mediaservice.player.DownloadedClip
+import com.maxrave.domain.mediaservice.player.DownloadedClips
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.mediaservice.player.MediaPlayerListener
 import com.maxrave.domain.mediaservice.player.MusicEnd
@@ -33,7 +35,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
@@ -119,9 +123,14 @@ class MpvPlayerAdapter(
         }
 
         coroutineScope.launch {
+            // The first value can arrive while this constructor is still running on another thread,
+            // before the fields refreshDownloadedClip reads exist; nothing plays yet then anyway.
+            var first = true
             dataStoreManager.watchVideoInsteadOfPlayingAudio.collect { enabled ->
                 watchVideoEnabled = (enabled == DataStoreManager.TRUE)
                 Logger.d(TAG, "Watch video enabled: $watchVideoEnabled")
+                if (!first) refreshDownloadedClip()
+                first = false
             }
         }
 
@@ -367,6 +376,63 @@ class MpvPlayerAdapter(
     /** Frame source of the player whose video should be on screen, or null when the current track has no video. */
     val currentVideoFrames: StateFlow<MpvVideoFrameSource?> = _currentVideoFrames.asStateFlow()
 
+    // ========== Downloaded clip shown from the network ==========
+
+    /**
+     * The one track whose downloaded clip the user asked to watch: [resolvePlayableUrl] streams it as a
+     * video instead of reading its file. Dropped as soon as another track is current (see
+     * [refreshDownloadedClip]), so the decision never outlives the track.
+     */
+    @Volatile
+    private var streamedClipId: String? = null
+
+    private val _downloadedClip = MutableStateFlow<DownloadedClip?>(null)
+    override val downloadedClip: StateFlow<DownloadedClip?> = _downloadedClip.asStateFlow()
+
+    private val _downloadedClipFailures = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val downloadedClipFailures: SharedFlow<Unit> = _downloadedClipFailures
+
+    /**
+     * Re-reads [downloadedClip] for the current track, and drops [streamedClipId] once another track is
+     * current. Called wherever the current track or its handle changes, and when "watch video" flips.
+     */
+    private fun refreshDownloadedClip() {
+        val item = currentMediaItem
+        streamedClipId = DownloadedClips.carriedOver(streamedClipId, item?.mediaId)
+        _downloadedClip.value =
+            item?.let {
+                DownloadedClips.stateOf(
+                    mediaId = it.mediaId,
+                    watchVideoEnabled = watchVideoEnabled,
+                    itemIsVideo = it.isVideo(),
+                    audioOnlyDownload = downloadedFile(it.mediaId) != null,
+                    streamedClipId = streamedClipId,
+                )
+            }
+    }
+
+    override fun showDownloadedClip(show: Boolean) {
+        coroutineScope.launch {
+            val clip = _downloadedClip.value
+            val videoId = currentMediaItem?.mediaId
+            if (clip == null || clip.mediaId != videoId || clip.shown == show) return@launch
+            // A crossfade is about to make another track current: nothing to switch.
+            if (isCrossfading) return@launch
+            Logger.i(TAG, "downloaded clip $videoId: ${if (show) "streaming its video" else "back to the file"}")
+            streamedClipId = if (show) videoId else null
+            _downloadedClip.value = clip.copy(shown = show)
+            precachedPlayers.remove(videoId)?.player?.release()
+            loadAndPlayTrackInternal(
+                localCurrentMediaItemIndex,
+                startPositionMs = cachedPosition,
+                shouldPlay = internalPlayWhenReady,
+                // Still the same track: announcing it would log a second listen and restart Discord's bar.
+                announceTransition = false,
+                resumeFromCurrent = true,
+            )
+        }
+    }
+
     // ========== Playback Source ==========
     private data class PlayableSource(
         val isVideo: Boolean,
@@ -552,6 +618,7 @@ class MpvPlayerAdapter(
             currentPlayer = null
             currentPlayerIsVideo = false
             _currentVideoFrames.value = null
+            refreshDownloadedClip()
             loadAndPlayTrackInternal(mediaItemIndex, positionMs, shouldPlay)
         }
     }
@@ -1668,6 +1735,9 @@ class MpvPlayerAdapter(
         startPositionMs: Long,
         shouldPlay: Boolean,
         announceTransition: Boolean = true,
+        // The same track on another source (a downloaded clip shown or hidden): it starts where the
+        // playing handle is when the new one is ready, not where it was when the switch was asked.
+        resumeFromCurrent: Boolean = false,
     ) {
         if (index !in playlist.indices) return
 
@@ -1719,6 +1789,15 @@ class MpvPlayerAdapter(
                                 }
                                 source = withContext(Dispatchers.IO) { extractPlayableUrl(mediaItem) }
                             }
+                            if ((source == null || source.url.isEmpty()) && streamedClipId == videoId) {
+                                // The downloaded clip's video is out of reach (no network): back to its
+                                // file at the same place, which needs nothing from the network.
+                                Logger.w(TAG, "No video for the downloaded clip $videoId, staying on the file")
+                                streamedClipId = null
+                                refreshDownloadedClip()
+                                _downloadedClipFailures.tryEmit(Unit)
+                                source = withContext(Dispatchers.IO) { extractPlayableUrl(mediaItem) }
+                            }
                             if (source == null || source.url.isEmpty()) {
                                 Logger.e(TAG, "Failed to extract playable URL for $videoId after retry")
                                 transitionToState(InternalState.ERROR)
@@ -1734,11 +1813,20 @@ class MpvPlayerAdapter(
                         return@launch
                     }
 
+                    val loadPositionMs =
+                        if (resumeFromCurrent) {
+                            currentPlayer?.let { runCatching { it.time }.getOrNull() }?.takeIf { it > 0 } ?: startPositionMs
+                        } else {
+                            startPositionMs
+                        }
+
                     // mpv native calls on the service thread
                     cleanupCurrentPlayerInternal()
                     currentPlayer = player
                     currentPlayerIsVideo = player.videoFrames != null
                     _currentVideoFrames.value = player.videoFrames
+                    cachedPosition = loadPositionMs
+                    refreshDownloadedClip()
                     setupPlayerEventsInternal(player)
                     player.applyPlaybackLevels()
 
@@ -1746,8 +1834,8 @@ class MpvPlayerAdapter(
                         Logger.i("Offline", "resolve $videoId precached")
                         // The precached handle already has the file loaded and held paused;
                         // unpausing is all that is needed (VLC needed an explicit play() here too).
-                        if (startPositionMs > 0) {
-                            player.seekTo(startPositionMs)
+                        if (loadPositionMs > 0) {
+                            player.seekTo(loadPositionMs)
                         }
                         if (shouldPlay) {
                             player.play()
@@ -1758,7 +1846,7 @@ class MpvPlayerAdapter(
                         if (source != null) {
                             // The position rides on the load: time-pos is unavailable until the file
                             // is open, so seeking after this is refused and the track starts from 0.
-                            player.loadFile(buildPlaybackUrl(source), startPaused = !shouldPlay, startMs = startPositionMs)
+                            player.loadFile(buildPlaybackUrl(source), startPaused = !shouldPlay, startMs = loadPositionMs)
                         } else {
                             Logger.e(TAG, "resolvedSource is null — should not happen")
                             transitionToState(InternalState.ERROR)
@@ -1889,6 +1977,27 @@ class MpvPlayerAdapter(
                             if (retryVideoId != currentVideoId) {
                                 retryVideoId = currentVideoId
                                 retryCount = 0
+                            }
+                            // A downloaded clip watched from the network: one fresh URL, then back to
+                            // the file. Never the download heal below, the file is not what failed.
+                            if (streamedClipId == currentVideoId && playerOrigins[player]?.second?.isVideo == true) {
+                                if (retryCount == 0) {
+                                    retryCount++
+                                    Logger.w(TAG, "Video of the downloaded clip $currentVideoId failed, retrying once")
+                                } else {
+                                    Logger.w(TAG, "Video of the downloaded clip $currentVideoId failed again, back to the file")
+                                    streamedClipId = null
+                                    retryCount = 0
+                                    refreshDownloadedClip()
+                                    _downloadedClipFailures.tryEmit(Unit)
+                                }
+                                try {
+                                    reloadCurrentTrack(currentVideoId)
+                                    return@launch
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    Logger.e(TAG, "Reload of the downloaded clip failed: ${e.message}", e)
+                                }
                             }
                             // A cached copy is only a copy: dropped on its first failure, and the
                             // reload streams the track instead.
@@ -2361,6 +2470,7 @@ class MpvPlayerAdapter(
                     localCurrentMediaItemIndex = nextIndex
                     unpinCurrent()
                     _currentVideoFrames.value = nextPlayer.videoFrames
+                    refreshDownloadedClip()
                     notifyListeners {
                         onMediaItemTransition(
                             nextMediaItem,
@@ -2496,6 +2606,7 @@ class MpvPlayerAdapter(
         currentPlayer = incoming
         currentPlayerIsVideo = incoming.videoFrames != null
         _currentVideoFrames.value = incoming.videoFrames
+        refreshDownloadedClip()
         secondaryPlayer = null
 
         // Until now it only carried the minimal crossfade error listener (see
@@ -2598,6 +2709,7 @@ class MpvPlayerAdapter(
         currentPlayer = nextPlayer
         currentPlayerIsVideo = nextPlayer.videoFrames != null
         _currentVideoFrames.value = nextPlayer.videoFrames
+        refreshDownloadedClip()
         secondaryPlayer = null
 
         // Now set up the full event listener on the new current player
@@ -3224,6 +3336,8 @@ class MpvPlayerAdapter(
         listenOffered = true
         val (videoId, source) = playerOrigins[player] ?: return
         if (source.isLive || LiveStreamRegistry.isLive(videoId)) return
+        // A downloaded clip watched from the network: its audio is on disk already.
+        if (downloadedFile(videoId) != null) return
         // The audio stream itself: a video source carries it as its slave. A local path is a file
         // that is already a download or a cached copy.
         val audioUrl = (if (source.isVideo) source.audioSlaveUrl else source.url) ?: return
@@ -3264,7 +3378,18 @@ class MpvPlayerAdapter(
 
     private suspend fun extractPlayableUrl(mediaItem: GenericMediaItem): PlayableSource? {
         val started = System.nanoTime()
-        return resolvePlayableUrl(mediaItem).also {
+        val resolved =
+            try {
+                resolvePlayableUrl(mediaItem)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A downloaded clip's video that cannot be had is an answer: the load goes back to the file.
+                if (streamedClipId != mediaItem.mediaId) throw e
+                Logger.w(TAG, "Video of the downloaded clip ${mediaItem.mediaId} failed: ${e.message}")
+                null
+            }
+        return resolved.also {
             Logger.i("Offline", "resolve ${mediaItem.mediaId} extract ${(System.nanoTime() - started) / 1_000_000} ok=${it != null}")
         }
     }
@@ -3275,9 +3400,12 @@ class MpvPlayerAdapter(
             mediaItem.isVideo() &&
                 dataStoreManager.watchVideoInsteadOfPlayingAudio.first() == DataStoreManager.TRUE
         val videoId = mediaItem.mediaId
+        // The downloaded clip the user asked to watch: its video comes from the network, never from
+        // the listening cache or the file (both hold audio only), and no answer is an answer.
+        val streamClip = DownloadedClips.streams(videoId, shouldFindVideo, mediaItem.isVideo(), streamedClipId)
 
         // Check downloads first
-        downloadedFile(videoId)?.let { audioFile ->
+        if (!streamClip) downloadedFile(videoId)?.let { audioFile ->
             // mpv accepts absolute file paths directly
             Logger.i("Offline", "source $videoId download")
             return PlayableSource(isVideo = false, url = audioFile.absolutePath)
@@ -3392,7 +3520,7 @@ class MpvPlayerAdapter(
             }
         }
 
-        if (shouldFindVideo) cachedSource(videoId)?.let { return it }
+        if (shouldFindVideo && !streamClip) cachedSource(videoId)?.let { return it }
 
         Logger.i("Offline", "source $videoId none")
         return null

@@ -42,6 +42,14 @@ internal class MergingMediaSourceFactory(
 
     override fun getSupportedTypes(): IntArray = defaultMediaSourceFactory.supportedTypes
 
+    /**
+     * The one downloaded clip the user asked to watch (CrossfadeExoPlayerAdapter.showDownloadedClip):
+     * its video streams from the network beside the downloaded audio, and nothing is queued for
+     * download. Set and cleared by the adapter, which keeps it to the current track.
+     */
+    @Volatile
+    var streamedClipId: String? = null
+
     override fun createMediaSource(mediaItem: MediaItem): MediaSource {
         if (LiveStreamRegistry.isLive(mediaItem.mediaId)) {
             // One HLS playlist carrying audio and video together: no merge, and none of the
@@ -59,7 +67,7 @@ internal class MergingMediaSourceFactory(
         val getVideo = runBlocking(Dispatchers.IO) { dataStoreManager.watchVideoInsteadOfPlayingAudio.first() } == DataStoreManager.Values.TRUE
         Logger.d("Merging Media Source", getVideo.toString())
         val isClip = mediaItem.mediaMetadata.description == MERGING_DATA_TYPE.VIDEO && getVideo
-        if (isClip && isAudioOnlyDownload(mediaItem.mediaId)) {
+        if (isClip && mediaItem.mediaId != streamedClipId && isAudioOnlyDownload(mediaItem.mediaId)) {
             // Downloaded while video playback was off: the audio is on disk, the video is not.
             // Play the audio whatever the network says (a network without internet still claims
             // to be online, and one failing half fails the whole merged source), and fetch the
@@ -86,7 +94,7 @@ internal class MergingMediaSourceFactory(
 //        val default = defaultMediaSourceFactory.createMediaSource(mediaItem.buildUpon().setMediaId("AUDIO-${mediaItem.mediaId}").build())
     }
 
-    private fun isAudioOnlyDownload(mediaId: String): Boolean =
+    fun isAudioOnlyDownload(mediaId: String): Boolean =
         downloadCache.isFullyCached(mediaId, 0L) &&
             !downloadCache.isFullyCached("${MERGING_DATA_TYPE.VIDEO}$mediaId", 0L)
 }

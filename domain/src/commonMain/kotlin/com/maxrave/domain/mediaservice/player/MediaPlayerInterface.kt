@@ -5,7 +5,9 @@ import com.maxrave.domain.data.player.AudioOutput
 import com.maxrave.domain.data.player.EightDEffect
 import com.maxrave.domain.data.player.GenericMediaItem
 import com.maxrave.domain.data.player.GenericPlaybackParameters
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /** How many waveform bars [MediaPlayerInterface.loadWaveform] returns per second of audio. */
@@ -271,6 +273,27 @@ interface MediaPlayerInterface {
      */
     fun isLocallyPlayable(mediaId: String): Boolean = false
 
+    /**
+     * The current track when it is a clip downloaded as audio only and "watch video" is on (see
+     * [DownloadedClip]); null otherwise, which hides the "show clip" button. The default never has one.
+     */
+    val downloadedClip: StateFlow<DownloadedClip?>
+        get() = NO_DOWNLOADED_CLIP
+
+    /**
+     * Plays the current downloaded clip ([downloadedClip]) from the network as a video ([show] true), or
+     * back from its file, from the same position and keeping play or pause. Only for this track: the
+     * next one, and this one played again later, start from the file. Nothing is downloaded.
+     *
+     * When the video cannot be had (no network), the track stays on the file, [downloadedClip] goes back
+     * to not shown and [downloadedClipFailures] emits once. The default does nothing.
+     */
+    fun showDownloadedClip(show: Boolean) = Unit
+
+    /** One emission each time [showDownloadedClip] could not get the video and went back to the file. */
+    val downloadedClipFailures: SharedFlow<Unit>
+        get() = NO_DOWNLOADED_CLIP_FAILURES
+
     // Listener management
     fun addListener(listener: MediaPlayerListener)
 
@@ -283,3 +306,5 @@ interface MediaPlayerInterface {
 // What a backend that cannot list its outputs reports: nothing, and never anything else.
 private val NO_AUDIO_OUTPUTS: StateFlow<List<AudioOutput>> = MutableStateFlow(emptyList())
 private val NO_EIGHT_D: StateFlow<Boolean> = MutableStateFlow(false)
+private val NO_DOWNLOADED_CLIP: StateFlow<DownloadedClip?> = MutableStateFlow(null)
+private val NO_DOWNLOADED_CLIP_FAILURES: SharedFlow<Unit> = MutableSharedFlow()
