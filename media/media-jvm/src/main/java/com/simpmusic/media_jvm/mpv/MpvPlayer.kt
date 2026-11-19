@@ -640,6 +640,7 @@ class MpvPlayer private constructor(
         // `start` is read by the next loadfile, so it rides on the handle like the options in [create]:
         // `time-pos` cannot be set yet, since nothing is loaded.
         if (startMs > 0) setPropertyString("start", (startMs / 1000.0).toString())
+        matchSilenceStartTrim(startMs)
         command("loadfile", url, "replace")
     }
 
@@ -903,6 +904,13 @@ class MpvPlayer private constructor(
     @Volatile
     private var silenceEntry: String? = null
 
+    /**
+     * Whether the skip-silence entry also trims leading silence: only while playback runs from the top
+     * of the file. A load at a position or a seek switches it off (see [silenceRemoveGraph]).
+     */
+    @Volatile
+    private var silenceTrimsStart = true
+
     /** Crossfade entries currently installed, so an equalizer change can rewrite around them. */
     @Volatile
     private var crossfadeEntries: List<String> = emptyList()
@@ -1036,6 +1044,22 @@ class MpvPlayer private constructor(
      * @return true when the setting is now in force (or was already off), false when it was asked for
      *   and this libmpv cannot do it.
      */
+    private fun silenceEntryFor(trimStart: Boolean): String = "@$SILENCE_LABEL:lavfi=[${silenceRemoveGraph(trimStart)}]"
+
+    /**
+     * Leading silence is trimmed only when playback starts at the top of the file, at [positionMs] 0.
+     * Rewrites the chain when skip silence is on and the entry has to change; returns whether it did.
+     */
+    private fun matchSilenceStartTrim(positionMs: Long): Boolean {
+        val trimStart = positionMs <= 0L
+        if (trimStart == silenceTrimsStart) return false
+        silenceTrimsStart = trimStart
+        if (silenceEntry == null) return false
+        silenceEntry = silenceEntryFor(trimStart)
+        applyAudioFilters()
+        return true
+    }
+
     fun setSkipSilence(enabled: Boolean): Boolean {
         if (isReleased) return false
         if (!enabled) {
@@ -1045,7 +1069,7 @@ class MpvPlayer private constructor(
             return true
         }
         if (!silenceFilterSupported) return false
-        silenceEntry = "@$SILENCE_LABEL:lavfi=[${silenceRemoveGraph()}]"
+        silenceEntry = silenceEntryFor(silenceTrimsStart)
         if (applyAudioFilters()) return true
         silenceEntry = null
         silenceFilterUnavailable = true
@@ -1226,7 +1250,10 @@ class MpvPlayer private constructor(
         if (isReleased) return
         // The seek's reset rebuilds the 8D graph from its string with n = 0 (see [syncEightD]).
         // Writing the live phase first makes that rebuild start on it, before any audio refills.
-        if (eightDInstalled && eightDOrbit != null && eightDFadeOutEffect == null) applyAudioFilters()
+        // The seek rebuilds the skip-silence graph too; one that trims leading silence would jump from
+        // a quiet spot to the next sound. Rewritten here, the 8D phase below goes with it.
+        val silenceRewritten = matchSilenceStartTrim(timeMs)
+        if (!silenceRewritten && eightDInstalled && eightDOrbit != null && eightDFadeOutEffect == null) applyAudioFilters()
         setPropertyDouble("time-pos", timeMs / 1000.0)
     }
 
