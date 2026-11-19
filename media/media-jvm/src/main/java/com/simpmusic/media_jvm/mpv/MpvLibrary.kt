@@ -110,6 +110,27 @@ interface MpvLibrary : Library {
         args: Array<String?>,
     ): Int
 
+    // ---- hooks ----
+
+    /**
+     * `int mpv_hook_add(mpv_handle *ctx, uint64_t reply_userdata, const char *name, int priority);`
+     *
+     * mpv stops at the named point and sends MPV_EVENT_HOOK; it goes on only after
+     * [mpv_hook_continue], or once this client is destroyed.
+     */
+    fun mpv_hook_add(
+        ctx: Pointer,
+        reply_userdata: Long,
+        name: String,
+        priority: Int,
+    ): Int
+
+    /** `int mpv_hook_continue(mpv_handle *ctx, uint64_t id);` */
+    fun mpv_hook_continue(
+        ctx: Pointer,
+        id: Long,
+    ): Int
+
     // ---- events ----
 
     /**
@@ -578,6 +599,20 @@ open class MpvEventEndFile(
     @JvmField var reason: Int = 0
 
     @JvmField var error: Int = 0
+}
+
+/**
+ * `struct mpv_event_hook` — client.h.
+ *
+ * LP64 layout: name@0, id@8.
+ */
+@Structure.FieldOrder("name", "id")
+open class MpvEventHook(
+    pointer: Pointer? = null,
+) : Structure(pointer) {
+    @JvmField var name: Pointer? = null
+
+    @JvmField var id: Long = 0
 }
 
 /**

@@ -101,6 +101,12 @@ class MpvPlayer private constructor(
         /** Userdata tag for every `mpv_observe_property` registration; we dispatch by name. */
         private const val OBSERVE_USERDATA = 1L
 
+        /** Userdata tag of the `on_unload` hook. */
+        private const val UNLOAD_HOOK_USERDATA = 2L
+
+        /** `"debug-ts-last":<seconds>` inside the printed `demuxer-cache-state`. */
+        private val DEMUXED_UNTIL = Regex("\"debug-ts-last\":(-?[0-9.]+(?:[eE][-+]?[0-9]+)?)")
+
         /** mpv's own range for `volume-gain` is ±150 dB; a loudness correction never comes near it. */
         private const val VOLUME_GAIN_LIMIT_DB = 150.0
 
@@ -430,6 +436,10 @@ class MpvPlayer private constructor(
         observe("pause", MpvFormat.FLAG)
         observe("cache-buffering-state", MpvFormat.INT64)
         if (videoFrames != null) observe("video-params/aspect", MpvFormat.DOUBLE)
+        // Read how far the input was demuxed while the file is still loaded: at END_FILE every
+        // property of it is already gone (see [demuxedUntilMs]).
+        val hookRc = lib.mpv_hook_add(ctx, UNLOAD_HOOK_USERDATA, "on_unload", 0)
+        if (hookRc < 0) Logger.w(TAG, "mpv_hook_add(on_unload) failed: ${lib.mpv_error_string(hookRc)}")
 
         pumpThread =
             Thread({ pumpLoop() }, "Mpv-Event-Pump").apply {
@@ -503,6 +513,7 @@ class MpvPlayer private constructor(
         val listener = eventListener
         when (event.event_id) {
             MpvEventId.START_FILE -> {
+                demuxedUntilMs = 0L
                 playbackRestarted = false
                 lastEmittedPlaying = null
                 listener?.opening(this)
@@ -536,6 +547,8 @@ class MpvPlayer private constructor(
             }
 
             MpvEventId.SEEK -> listener?.seeking(this)
+
+            MpvEventId.HOOK -> onHook(event)
 
             MpvEventId.PLAYBACK_RESTART -> {
                 // Also fires after every seek, so it can't stand in for vlcj's playing() on its
@@ -1215,6 +1228,47 @@ class MpvPlayer private constructor(
         // Writing the live phase first makes that rebuild start on it, before any audio refills.
         if (eightDInstalled && eightDOrbit != null && eightDFadeOutEffect == null) applyAudioFilters()
         setPropertyDouble("time-pos", timeMs / 1000.0)
+    }
+
+    /**
+     * How far into the file the demuxer had read when the last file was unloaded, in milliseconds,
+     * or 0 when unknown. Set before the END_FILE that follows, and cleared when the next file starts.
+     *
+     * Tells the two kinds of early end apart. A stream cut by an expired link stops being read where
+     * it was cut. A track whose closing silence `silenceremove` dropped was read to its last packet:
+     * the filter swallows the tail as fast as it decodes, so mpv reports EOF with the position where
+     * the music stopped, seconds before the duration (measured on libmpv: 8 s of tone and 12 s of
+     * silence end at 8.2 s with this at 19.99 s; the same file cut at 60 KB ends at 4.1 s with 4.4 s).
+     * `demuxer-cache-time` cannot be used instead: its last observed value is stale by then.
+     */
+    @Volatile
+    var demuxedUntilMs: Long = 0L
+        private set
+
+    /** Answers a hook, always: mpv waits on it, and a hook left open would wedge this handle. */
+    private fun onHook(event: MpvEvent) {
+        val dataPtr = event.data ?: return
+        val hook =
+            try {
+                MpvEventHook(dataPtr).apply { read() }
+            } catch (e: Throwable) {
+                Logger.w(TAG, "Failed to read mpv_event_hook: ${e.message}")
+                return
+            }
+        try {
+            if (event.reply_userdata == UNLOAD_HOOK_USERDATA) {
+                demuxedUntilMs =
+                    getPropertyString("demuxer-cache-state")
+                        ?.let { DEMUXED_UNTIL.find(it)?.groupValues?.get(1)?.toDoubleOrNull() }
+                        ?.let(::secondsToMs) ?: 0L
+            }
+        } finally {
+            try {
+                lib.mpv_hook_continue(ctx, hook.id)
+            } catch (e: Throwable) {
+                Logger.e(TAG, "mpv_hook_continue threw: ${e.message}")
+            }
+        }
     }
 
     /** Current position in milliseconds, or 0. Mirrors `VlcPlayer.time`. */

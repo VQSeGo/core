@@ -1822,7 +1822,7 @@ class MpvPlayerAdapter(
                             Logger.d(TAG, "Ignoring finished() during crossfade (old player ended)")
                             return@launch
                         }
-                        if (resumeAfterEarlyEnd()) return@launch
+                        if (resumeAfterEarlyEnd(player)) return@launch
                         transitionToState(InternalState.ENDED)
                         handleTrackEndInternal()
                     }
@@ -2088,12 +2088,18 @@ class MpvPlayerAdapter(
      * 4:00, gives MPV_END_FILE_REASON_EOF). Taken at face value that skips to the next track, or
      * under Repeat One restarts this one.
      *
+     * A file that was read to its end did end, wherever the position stopped: with skip silence on,
+     * `silenceremove` drops the closing silence and mpv reports EOF where the music stopped. Taken for
+     * a cut stream, that tail was reloaded twice (the last half second heard three times, and the
+     * listening cache of a good track dropped) before the track moved on.
+     *
      * @return true when a reload was started and the end must not be handled.
      */
-    private suspend fun resumeAfterEarlyEnd(): Boolean {
+    private suspend fun resumeAfterEarlyEnd(player: MpvPlayer): Boolean {
         val videoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId ?: return false
         val positionMs = cachedPosition
         if (cachedDuration - positionMs <= EARLY_END_MARGIN_MS || isCurrentTrackLive()) return false
+        if (cachedDuration - player.demuxedUntilMs <= EARLY_END_MARGIN_MS) return false
         // Getting further than last time counts as recovering, so only a stream that keeps dying
         // at the same place uses up its attempts.
         if (videoId != earlyEndVideoId || positionMs - earlyEndPositionMs > EARLY_END_MARGIN_MS) {
