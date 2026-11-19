@@ -2036,6 +2036,14 @@ internal class CrossfadeExoPlayerAdapter(
 
         setCrossfading(false)
         crossfadeFromIndex = -1
+
+        // The position loop was stopped above and only finalizeCrossfade or a track load starts it
+        // again; play() does not. Left stopped, a seek or a pause in the middle of a fade froze the
+        // position (and the music-end check and the next crossfade with it) for the rest of the
+        // track while A+1 played on. It reads currentPlayer, which is A+1 now.
+        startPositionUpdates()
+        triggerPrecachingInternal()
+        Logger.i(TAG, "Crossfade interrupted: track $localCurrentMediaItemIndex kept, position updates resumed")
     }
 
     // ========== Internal: Track End ==========
