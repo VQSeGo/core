@@ -1272,6 +1272,9 @@ class MpvPlayerAdapter(
         }
     }
 
+    /** Skip silence is on and this libmpv can do it, so tracks end where their music does. */
+    private fun isSkipSilenceInForce(): Boolean = internalSkipSilence && MpvPlayer.silenceFilterSupported
+
     /** Whether skip silence is on, so a handle created later starts with it. */
     @Volatile
     private var internalSkipSilence = false
@@ -2145,6 +2148,12 @@ class MpvPlayerAdapter(
 
         val shouldCrossfade =
             crossfadeEnabled &&
+                // The track has already ended. With skip silence on, its closing silence was cut, so
+                // the music stopped before the position the fade is timed from: a crossfade now would
+                // only fade the next track in from nothing for seconds after the old one went quiet.
+                // The next track starts at once instead, as on Android. The fade that runs ahead of
+                // the end, off the position loop, is untouched.
+                !isSkipSilenceInForce() &&
                 !crossfadeSuppressed &&
                 // Repeat One loops this track through the branch below instead of fading into the next.
                 internalRepeatMode != PlayerConstants.REPEAT_MODE_ONE &&
