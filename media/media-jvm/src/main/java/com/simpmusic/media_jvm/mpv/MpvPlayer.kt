@@ -1037,7 +1037,11 @@ class MpvPlayer private constructor(
         silenceEntry = null
         silenceFilterUnavailable = true
         Logger.w(TAG, "skip silence unavailable: this libmpv lacks the silenceremove filter")
-        applyAudioFilters()
+        // `af set` hands the previous chain back when it refuses one, so there is nothing to restore;
+        // rewriting an empty chain would only make mpv rebuild its audio filters for no reason.
+        if (eqEntry != null || fxEntries.isNotEmpty() || crossfadeEntries.isNotEmpty() || eightDInstalled) {
+            applyAudioFilters()
+        }
         return false
     }
 
