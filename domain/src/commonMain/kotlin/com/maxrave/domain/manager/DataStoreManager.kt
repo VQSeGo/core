@@ -394,6 +394,22 @@ interface DataStoreManager {
     suspend fun setCrossfadeSkipAlbum(enabled: Boolean)
 
     /**
+     * Ids of tracks marked "no crossfade at the start": the fade into them is skipped. Local only,
+     * set from the track's `⋯` menu (see CrossfadeExclusions).
+     */
+    val crossfadeExcludedStarts: Flow<Set<String>>
+
+    /** Ids of tracks marked "no crossfade at the end": the fade out of them is skipped. */
+    val crossfadeExcludedEnds: Flow<Set<String>>
+
+    /** Marks or unmarks [videoId] for its start ([atEnd] false) or its end ([atEnd] true). */
+    suspend fun setCrossfadeExcluded(
+        videoId: String,
+        atEnd: Boolean,
+        excluded: Boolean,
+    )
+
+    /**
      * When on, liking a song also queues it for offline download, at the existing download quality.
      *
      * Off by default — it spends storage and data without the user asking each time. Only applies

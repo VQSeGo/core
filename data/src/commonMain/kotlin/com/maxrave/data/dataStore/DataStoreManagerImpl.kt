@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.maxrave.common.SELECTED_LANGUAGE
 import com.maxrave.common.SUPPORTED_LANGUAGE
 import com.maxrave.domain.data.model.discord.DiscordSession
@@ -1214,6 +1215,31 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val crossfadeExcludedStarts: Flow<Set<String>> =
+        settingsDataStore.data.map { preferences ->
+            preferences[CROSSFADE_EXCLUDED_STARTS] ?: emptySet()
+        }
+
+    override val crossfadeExcludedEnds: Flow<Set<String>> =
+        settingsDataStore.data.map { preferences ->
+            preferences[CROSSFADE_EXCLUDED_ENDS] ?: emptySet()
+        }
+
+    override suspend fun setCrossfadeExcluded(
+        videoId: String,
+        atEnd: Boolean,
+        excluded: Boolean,
+    ) {
+        val key = if (atEnd) CROSSFADE_EXCLUDED_ENDS else CROSSFADE_EXCLUDED_STARTS
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                val current = settings[key] ?: emptySet()
+                val updated = if (excluded) current + videoId else current - videoId
+                if (updated.isEmpty()) settings.remove(key) else settings[key] = updated
+            }
+        }
+    }
+
     // Defaults to FALSE: it spends storage and mobile data on the user's behalf.
     override val autoDownloadLikedSongs: Flow<String> =
         settingsDataStore.data.map { preferences ->
@@ -1438,6 +1464,8 @@ internal class DataStoreManagerImpl(
         val CROSSFADE_ENABLED = stringPreferencesKey("crossfade_enabled")
         val CROSSFADE_DURATION = intPreferencesKey("crossfade_duration")
         val CROSSFADE_SKIP_ALBUM = stringPreferencesKey("crossfade_skip_album")
+        val CROSSFADE_EXCLUDED_STARTS = stringSetPreferencesKey("crossfade_excluded_starts")
+        val CROSSFADE_EXCLUDED_ENDS = stringSetPreferencesKey("crossfade_excluded_ends")
         val AUTO_DOWNLOAD_LIKED_SONGS = stringPreferencesKey("auto_download_liked_songs")
         val SMART_DOWNLOADS_ENABLED = stringPreferencesKey("smart_downloads_enabled")
         val SMART_DOWNLOADS_COUNT = intPreferencesKey("smart_downloads_count")

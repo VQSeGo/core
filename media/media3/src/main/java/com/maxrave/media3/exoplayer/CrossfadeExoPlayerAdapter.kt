@@ -38,6 +38,7 @@ import com.maxrave.domain.data.player.PlayerError
 import com.maxrave.domain.extension.isVideo
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
+import com.maxrave.domain.mediaservice.player.CrossfadeExclusions
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.mediaservice.player.MediaPlayerListener
 import com.maxrave.domain.mediaservice.player.MusicEnd
@@ -161,6 +162,13 @@ internal class CrossfadeExoPlayerAdapter(
                 skipCrossfadeInAlbum = (enabled == DataStoreManager.TRUE)
                 Logger.d(TAG, "Skip crossfade inside album: $skipCrossfadeInAlbum")
             }
+        }
+        // The per-track marks from the ⋯ menu, kept here so the position loop never reads the store.
+        coroutineScope.launch {
+            dataStoreManager.crossfadeExcludedStarts.collect { crossfadeExcludedStarts = it }
+        }
+        coroutineScope.launch {
+            dataStoreManager.crossfadeExcludedEnds.collect { crossfadeExcludedEnds = it }
         }
     }
 
@@ -407,6 +415,16 @@ internal class CrossfadeExoPlayerAdapter(
     /** Set by the handler when an album is loaded; empty for every other kind of queue. */
     @Volatile
     private var internalAlbumTrackIds: Set<String> = emptySet()
+
+    /** Tracks marked "no crossfade at the start" / "at the end" (see CrossfadeExclusions). */
+    @Volatile
+    private var crossfadeExcludedStarts: Set<String> = emptySet()
+
+    @Volatile
+    private var crossfadeExcludedEnds: Set<String> = emptySet()
+
+    /** The junction last logged as excluded, so the position loop logs it once, not every tick. */
+    private var loggedExcludedJunction: String? = null
 
     @Volatile
     private var secondaryPlayer: ExoPlayer? = null
@@ -2098,6 +2116,28 @@ internal class CrossfadeExoPlayerAdapter(
     }
 
     /**
+     * True when the user marked this track's end, or the next track's start, to play without a
+     * crossfade. The junction then goes as with crossfade off, like [isWithinAlbum].
+     */
+    private fun isCrossfadeExcludedByUser(): Boolean {
+        val ends = crossfadeExcludedEnds
+        val starts = crossfadeExcludedStarts
+        if (ends.isEmpty() && starts.isEmpty()) return false
+        val current = currentMediaItem?.mediaId
+        val next = playlist.getOrNull(getNextMediaItemIndex())?.mediaId
+        val excluded = CrossfadeExclusions.blocksJunction(current, next, ends, starts)
+        val junction = "$current -> $next"
+        if (!excluded) {
+            if (loggedExcludedJunction == junction) loggedExcludedJunction = null
+        } else if (loggedExcludedJunction != junction) {
+            loggedExcludedJunction = junction
+            val why = if (current != null && current in ends) "end of $current" else "start of $next"
+            Logger.i(TAG, "No crossfade $junction: the $why is marked to play without one")
+        }
+        return excluded
+    }
+
+    /**
      * Handle track end - mirrors GstreamerPlayerAdapter.handleTrackEndInternal()
      */
     private fun handleTrackEndInternal() {
@@ -2120,7 +2160,8 @@ internal class CrossfadeExoPlayerAdapter(
                 !isCurrentTrackLive() &&
                 !isNextTrackLive() &&
                 !isCurrentTrackTooShortForCrossfade() &&
-                !isWithinAlbum()
+                !isWithinAlbum() &&
+                !isCrossfadeExcludedByUser()
 
         if (shouldCrossfade) {
             val nextIndex = getNextMediaItemIndex()
@@ -2454,7 +2495,8 @@ internal class CrossfadeExoPlayerAdapter(
                                     !isCurrentTrackLive() &&
                                     !isNextTrackLive() &&
                                     !isCurrentTrackTooShortForCrossfade() &&
-                                    !isWithinAlbum()
+                                    !isWithinAlbum() &&
+                                    !isCrossfadeExcludedByUser()
                                 ) {
                                     // Up to the music end when skip silence is on and it is known, so
                                     // the old track fades out over its last music, not its silence.
