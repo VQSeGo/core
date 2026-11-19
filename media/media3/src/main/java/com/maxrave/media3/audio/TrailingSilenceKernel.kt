@@ -121,6 +121,9 @@ class TrailingSilenceKernel(
         return dropped
     }
 
+    /** How many whole frames [bytes] of audio hold. */
+    fun framesIn(bytes: Int): Long = (bytes / frameBytes).toLong()
+
     /** How long [bytes] of audio last, in milliseconds. */
     fun durationMs(bytes: Int): Long = bytes.toLong() / frameBytes * 1000 / sampleRateHz
 

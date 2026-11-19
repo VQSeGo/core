@@ -546,6 +546,12 @@ internal class CrossfadeExoPlayerAdapter(
                                 private val processorsWithEightD = super.getAudioProcessors() + eightD
 
                                 override fun getAudioProcessors(): Array<AudioProcessor> = processorsWithEightD
+
+                                // The sink moves the playback position forward by what the skippers cut.
+                                // The tail the trailing-silence processor drops has to count too, or the
+                                // track only ends once the clock has run through the silence it removed.
+                                override fun getSkippedOutputFrameCount(): Long =
+                                    super.getSkippedOutputFrameCount() + trailingSilence.skippedFrames
                             },
                         ).build()
             }
@@ -2298,13 +2304,23 @@ internal class CrossfadeExoPlayerAdapter(
                     finalizeCrossfade(nextIndex, nextPlayer)
                 } catch (e: CancellationException) {
                     Logger.d(TAG, "Crossfade cancelled")
-                    // Restore outgoing player's speed/pitch to natural
-                    currentPlayer?.playbackParameters =
-                        PlaybackParameters(internalPlaybackSpeed, internalPlaybackPitch)
-                    // Cleanup player
-                    nextPlayer.release()
-                    secondaryPlayer = null
-                    setCrossfading(false)
+                    // The cancel can come from commitIncomingAsCurrentInternal (a seek or pause in the
+                    // middle of the fade), which has already made the incoming player the current one.
+                    // This handler runs after it, so releasing nextPlayer here would release the player
+                    // that is now playing and leave the adapter holding a dead ExoPlayer: Play does
+                    // nothing from then on.
+                    if (nextPlayer !== currentPlayer) {
+                        // Restore outgoing player's speed/pitch to natural
+                        currentPlayer?.playbackParameters =
+                            PlaybackParameters(internalPlaybackSpeed, internalPlaybackPitch)
+                        // Cleanup player
+                        nextPlayer.release()
+                    }
+                    // A newer crossfade may already own the secondary slot and the flag.
+                    if (secondaryPlayer === nextPlayer || secondaryPlayer == null) {
+                        secondaryPlayer = null
+                        setCrossfading(false)
+                    }
                 }
             }
     }

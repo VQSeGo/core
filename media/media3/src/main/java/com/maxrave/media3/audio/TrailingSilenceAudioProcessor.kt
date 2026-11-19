@@ -30,6 +30,16 @@ class TrailingSilenceAudioProcessor(
 ) : BaseAudioProcessor() {
     private var kernel: TrailingSilenceKernel? = null
 
+    /**
+     * Frames thrown away since the stream last started over. The audio sink adds this to the playback
+     * position, as it does for the built-in skipper's count: without it ExoPlayer, whose clock only
+     * counts what was played, would sit at the point where the music stopped and wait out the dropped
+     * silence in real time before it called the track finished.
+     */
+    @Volatile
+    var skippedFrames: Long = 0L
+        private set
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
             return AudioProcessor.AudioFormat.NOT_SET
@@ -52,6 +62,7 @@ class TrailingSilenceAudioProcessor(
         val trim = enabled()
         val held = kernel.heldBytes
         val dropped = kernel.finish(trim = trim, allocate = ::replaceOutputBuffer)
+        skippedFrames += kernel.framesIn(dropped)
         // One line per track end, whether or not anything was cut: without it a quiet log cannot be
         // told apart from a processor that never ran.
         Logger.i(
@@ -64,10 +75,12 @@ class TrailingSilenceAudioProcessor(
     /** A seek or a new stream: what was held back belongs to a position that no longer plays. */
     override fun onFlush() {
         kernel?.clear()
+        skippedFrames = 0L
     }
 
     override fun onReset() {
         kernel = null
+        skippedFrames = 0L
     }
 
     private companion object {
