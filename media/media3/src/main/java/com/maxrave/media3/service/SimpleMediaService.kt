@@ -47,6 +47,47 @@ internal class SimpleMediaService :
 
     private val binder = MusicBinder()
 
+    /**
+     * Brings the service back to the foreground the moment playback starts after a pause or a stop.
+     *
+     * Media3 starts the foreground service from player events, and a track loaded from the app is
+     * started on a fresh player before the session attaches to it, so the service could play from
+     * the background-service state. Android 17 mutes background audio from an app with no
+     * foreground service a few seconds after it leaves the screen (AudioHardening, level partial),
+     * while the player and the notification still say "playing". It must happen while the app is
+     * visible: a foreground service started from the background gets no while-in-use access.
+     *
+     * Asks once per start of playback: the latch rearms whenever playback is not running.
+     */
+    private val foregroundGuard =
+        object : Player.Listener {
+            private var needsForeground = true
+
+            private fun check() {
+                val playing =
+                    player.playWhenReady &&
+                        (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_BUFFERING)
+                if (!playing) {
+                    needsForeground = true
+                    return
+                }
+                if (!needsForeground) return
+                needsForeground = false
+                val session = mediaSession ?: return
+                runCatching { onUpdateNotification(session, true) }
+                    .onFailure { Logger.w("Service", "Could not move the service to the foreground: $it") }
+            }
+
+            override fun onPlayWhenReadyChanged(
+                playWhenReady: Boolean,
+                reason: Int,
+            ) = check()
+
+            override fun onPlaybackStateChanged(playbackState: Int) = check()
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) = check()
+        }
+
     inner class MusicBinder : Binder() {
         val service: SimpleMediaService
             get() = this@SimpleMediaService
@@ -99,6 +140,8 @@ internal class SimpleMediaService :
                         .onFailure { Logger.e("Service", "Media button guard not installed: $it") }
                 }
         }
+
+        player.addListener(foregroundGuard)
 
         simpleMediaServiceHandler.onUpdateNotification = { list ->
             val commandButtonList = list.map { it.toCommandButton(this) }
@@ -172,6 +215,7 @@ internal class SimpleMediaService :
     override fun onDestroy() {
         super.onDestroy()
         Logger.d("Service", "Simple Media Service Destroyed")
+        player.removeListener(foregroundGuard)
         if (simpleMediaServiceHandler.shouldReleaseOnTaskRemoved()) {
             release()
         }

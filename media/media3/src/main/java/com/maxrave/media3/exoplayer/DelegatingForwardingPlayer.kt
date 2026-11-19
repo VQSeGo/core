@@ -427,6 +427,13 @@ internal class DelegatingForwardingPlayer(
      * so after a swap to an already-READY precached player it kept the outgoing ENDED, and
      * Media3's 10-minute user-engaged timeout dropped the foreground service mid-playback (#2233).
      *
+     * Also replays [Player.Listener.onPlayWhenReadyChanged] and [Player.Listener.onIsPlayingChanged].
+     * A track loaded from the app is started on its new player BEFORE the swap, so a session that
+     * attaches afterwards never sees "now playing" as an event. Media3 starts the foreground service
+     * from exactly those events; without them a service that had left the foreground after a pause
+     * stayed a plain background service while the music played, and Android 17's background audio
+     * hardening muted the app a few seconds after it was minimised.
+     *
      * Primary use case: crossfade transitions, where the secondary player is prepared
      * (with MediaItem + prepare()) before the ForwardingPlayer is swapped to it.
      * MediaSession uses these events to update the system notification metadata.
@@ -437,6 +444,8 @@ internal class DelegatingForwardingPlayer(
         val metadata = player.mediaMetadata
         val commands = getAvailableCommands()
         val state = getPlaybackState()
+        val playWhenReady = player.playWhenReady
+        val isPlaying = player.isPlaying
 
         Logger.d(TAG, "Manually notifying ${trackedListeners.size} listeners about media item change: ${metadata.title}")
 
@@ -446,6 +455,8 @@ internal class DelegatingForwardingPlayer(
                 listener.onMediaMetadataChanged(metadata)
                 listener.onAvailableCommandsChanged(commands)
                 listener.onPlaybackStateChanged(state)
+                listener.onPlayWhenReadyChanged(playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                listener.onIsPlayingChanged(isPlaying)
             } catch (e: Exception) {
                 Logger.w(TAG, "Error notifying listener about media item change: ${e.message}")
             }
