@@ -21,6 +21,8 @@ class TrailingSilenceKernelTest {
 
     private fun kernel(channels: Int = 1) = TrailingSilenceKernel(channelCount = channels, sampleRateHz = rate)
 
+    private fun kernelCappedAt(ms: Int) = TrailingSilenceKernel(channelCount = 1, sampleRateHz = rate, maxHeldMs = ms)
+
     private fun pcm(vararg samples: Int): ByteBuffer = pcm(samples.toList())
 
     private fun pcm(samples: List<Int>): ByteBuffer {
@@ -110,12 +112,24 @@ class TrailingSilenceKernelTest {
 
     @Test
     fun `silence that goes on past the cap is passed on instead of held forever`() {
-        val kernel = kernel()
+        val kernel = kernelCappedAt(10_000)
         // The cap is 10 s = 480 000 samples; the second buffer takes the held total over it.
         kernel.feed(sound(10) + silence(300_000))
         kernel.feed(silence(300_000))
         assertEquals(sound(10) + silence(600_000), played())
         assertEquals(0, kernel.heldBytes)
+    }
+
+    @Test
+    fun `a tail of fifteen seconds is held whole and dropped, not split`() {
+        val kernel = kernel()
+        // The default cap must outlast a long tail: split at the old 10 s cap, the first part went on to
+        // the built-in skipper and the player's position jumped while the rest was dropped unseen.
+        kernel.feed(sound(1_000))
+        repeat(15) { kernel.feed(silence(48_000)) }
+        assertEquals(sound(1_000), played())
+        kernel.end()
+        assertEquals(sound(1_000) + silence(7_200), played())
     }
 
     @Test

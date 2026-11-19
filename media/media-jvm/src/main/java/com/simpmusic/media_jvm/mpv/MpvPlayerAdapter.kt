@@ -1223,6 +1223,8 @@ class MpvPlayerAdapter(
         setRate(internalPlaybackSpeed)
         // A fresh handle has no correction, and this is the one the handler last set for the track now playing.
         setLoudnessGain(internalLoudnessGainDb)
+        // A fresh handle has an empty filter chain, so skip silence has to be put back on it.
+        if (internalSkipSilence) setSkipSilence(true)
         applyPitch()
         // A fresh handle starts with an empty filter chain, so the curve has to be re-applied or
         // the equalizer silently stops working at the next track — including on secondaryPlayer,
@@ -1270,7 +1272,17 @@ class MpvPlayerAdapter(
         }
     }
 
-    override var skipSilenceEnabled: Boolean = false
+    /** Whether skip silence is on, so a handle created later starts with it. */
+    @Volatile
+    private var internalSkipSilence = false
+
+    override var skipSilenceEnabled: Boolean
+        get() = internalSkipSilence
+        set(value) {
+            internalSkipSilence = value
+            // Every live handle, not only the newest: the one fading out keeps its silence skipped too.
+            coroutineScope.launch { forEachLiveHandle { it.setSkipSilence(value) } }
+        }
 
     /**
      * The loudness correction of the track that is playing, so a handle created later starts with it.

@@ -60,6 +60,40 @@ internal fun eightDGraph(
 // libmpv handle, no running track, no guessing at what mpv received. MpvPlayer only wraps the
 // result in `@label:lavfi=[ ]` and hands it to the `af` property.
 
+/**
+ * The "skip silence" graph: `silenceremove`, so silence is trimmed at the start, inside the track
+ * and at its end, by the same rule everywhere.
+ *
+ * How the filter counts, measured with ffmpeg rather than read off its manual: a stretch of silence
+ * passes through for [SILENCE_MIN_SECONDS], then the rest is cut and [SILENCE_KEEP_SECONDS] more is
+ * left in, so a silence of any length comes out at the sum of the two (0.6 s here) and one shorter
+ * than [SILENCE_MIN_SECONDS] is not touched. Leading silence is removed outright.
+ *
+ * - Anything quieter than [SILENCE_THRESHOLD_DB] counts as silence, judged on RMS over the filter's
+ *   default 20 ms window so a single quiet sample inside music does not.
+ * - `stop_periods=-1` is "every stretch, not only the first", which is what also takes the stretch at
+ *   the end of the track.
+ * - `timestamp=copy` keeps the audio's own timestamps, leaving a gap where silence was cut. With the
+ *   default (`write`) the stream would be re-stamped without the gaps, mpv's playback position would
+ *   fall behind the real timeline by everything skipped, and the seek bar would never reach the end.
+ */
+internal fun silenceRemoveGraph(): String =
+    "silenceremove=" +
+        "start_periods=1:start_duration=0.05:start_threshold=${SILENCE_THRESHOLD_DB}dB:" +
+        "start_silence=${mpvNumber(SILENCE_KEEP_SECONDS)}:" +
+        "stop_periods=-1:stop_duration=${mpvNumber(SILENCE_MIN_SECONDS)}:stop_threshold=${SILENCE_THRESHOLD_DB}dB:" +
+        "stop_silence=${mpvNumber(SILENCE_KEEP_SECONDS)}:" +
+        "detection=rms:timestamp=copy"
+
+/** Quieter than this is silence. Android's skipper uses -42 dBFS on the peak; this is RMS, so a little lower. */
+private const val SILENCE_THRESHOLD_DB = -45
+
+/** Silence this long goes by untouched; what comes after it is cut. */
+private const val SILENCE_MIN_SECONDS = 0.5f
+
+/** Silence that is left in place after the cut. */
+private const val SILENCE_KEEP_SECONDS = 0.1f
+
 /** `af_aecho.c:139` — *"delay[%d]: %f is out of allowed range: (0, 90000]"*. */
 private const val AECHO_MAX_DELAY_MS = 90_000
 

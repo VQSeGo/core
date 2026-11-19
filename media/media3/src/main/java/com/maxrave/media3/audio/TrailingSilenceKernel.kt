@@ -28,8 +28,11 @@ import kotlin.math.abs
  *   same level (-42 dBFS) the built-in skipper uses. A frame is silent when every channel is.
  * @param keepTailMs how much of the silence is still played at the end, so a song does not stop on a
  *   hard edge. Everything past it is dropped.
- * @param maxHeldMs the longest silence held back. Beyond it the silence is passed on, so a
- *   stretch of silence in the middle of a long track cannot grow without bound.
+ * @param maxHeldMs the longest silence held back (a minute is about 11 MB of stereo PCM). Beyond it the
+ *   silence is passed on, so a stretch of silence in the middle of a long track cannot grow
+ *   without bound. It has to be longer than any tail worth trimming: a tail that outgrows it is
+ *   split, the part before the cap goes to the built-in skipper, and the position then
+ *   jumps by what that skipper cut while the rest is dropped unseen at the end.
  */
 class TrailingSilenceKernel(
     channelCount: Int,
@@ -197,7 +200,7 @@ class TrailingSilenceKernel(
     companion object {
         const val DEFAULT_SILENCE_THRESHOLD = 256
         const val DEFAULT_KEEP_TAIL_MS = 150
-        const val DEFAULT_MAX_HELD_MS = 10_000
+        const val DEFAULT_MAX_HELD_MS = 60_000
 
         private const val BYTES_PER_SAMPLE = 2
         private const val INITIAL_HELD_BYTES = 64 * 1024

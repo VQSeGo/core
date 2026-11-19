@@ -2080,6 +2080,12 @@ internal class CrossfadeExoPlayerAdapter(
         // Check if crossfade should be used
         val shouldCrossfade =
             crossfadeEnabled &&
+                // The track has already ended: with skip silence on, its closing silence was cut, so
+                // the music finished before the position the fade is timed from. A crossfade now
+                // would only fade the next track in from nothing for seconds after the old one
+                // stopped; the next track starts at once instead. The fade that runs ahead of the
+                // end, off the position loop, is untouched.
+                !internalSkipSilence &&
                 !crossfadeSuppressed &&
                 // Repeat One loops this track through the branch below instead of fading into the next.
                 internalRepeatMode != PlayerConstants.REPEAT_MODE_ONE &&

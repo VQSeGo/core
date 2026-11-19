@@ -124,6 +124,21 @@ class MpvPlayer private constructor(
          */
         private const val EQ_LABEL = "simpEq"
 
+        /** `@label:` of the skip-silence entry. */
+        private const val SILENCE_LABEL = "simpSilence"
+
+        /**
+         * Set once mpv has refused a graph holding `silenceremove`: the bundled Linux libmpv is built
+         * with a filter whitelist, and an older slice has none of it. Latched like
+         * [reverbFiltersUnavailable] so a handle per track does not retry and re-log it on every song.
+         */
+        @Volatile
+        private var silenceFilterUnavailable = false
+
+        /** Whether skip silence can be built on this libmpv. */
+        val silenceFilterSupported: Boolean
+            get() = !silenceFilterUnavailable
+
         /** `@label:` of the multi-tap echo entry. */
         private const val FX_ECHO_LABEL = "simpFxEcho"
 
@@ -868,6 +883,13 @@ class MpvPlayer private constructor(
     @Volatile
     private var fxEntries: List<String> = emptyList()
 
+    /**
+     * The skip-silence entry, or null while it is off. First in the chain: it judges the decoded
+     * audio, before the equalizer or an effect can lift quiet passages above the threshold.
+     */
+    @Volatile
+    private var silenceEntry: String? = null
+
     /** Crossfade entries currently installed, so an equalizer change can rewrite around them. */
     @Volatile
     private var crossfadeEntries: List<String> = emptyList()
@@ -957,7 +979,7 @@ class MpvPlayer private constructor(
      * stage goes last of the rest.
      */
     private fun applyAudioFilters(): Boolean {
-        val others = listOfNotNull(eqEntry) + fxEntries + crossfadeEntries
+        val others = listOfNotNull(silenceEntry, eqEntry) + fxEntries + crossfadeEntries
         val eightD = eightDEntries()
         if (writeAf((others + eightD).joinToString(","))) {
             eightDInstalled = eightD.isNotEmpty()
@@ -989,6 +1011,35 @@ class MpvPlayer private constructor(
      * write (EQ, effects, the crossfade sweep).
      */
     private fun writeAf(chain: String): Boolean = command("af", "set", chain)
+
+    /**
+     * Turn skip silence on or off for this handle.
+     *
+     * `af` is one property, so a filter this libmpv lacks does not fail alone: mpv would reject the
+     * whole string and take the equalizer and the effects with it. The entry is therefore dropped
+     * again when the write is refused, the build is remembered as unable ([silenceFilterSupported])
+     * and the rest of the chain is written back.
+     *
+     * @return true when the setting is now in force (or was already off), false when it was asked for
+     *   and this libmpv cannot do it.
+     */
+    fun setSkipSilence(enabled: Boolean): Boolean {
+        if (isReleased) return false
+        if (!enabled) {
+            if (silenceEntry == null) return true
+            silenceEntry = null
+            applyAudioFilters()
+            return true
+        }
+        if (!silenceFilterSupported) return false
+        silenceEntry = "@$SILENCE_LABEL:lavfi=[${silenceRemoveGraph()}]"
+        if (applyAudioFilters()) return true
+        silenceEntry = null
+        silenceFilterUnavailable = true
+        Logger.w(TAG, "skip silence unavailable: this libmpv lacks the silenceremove filter")
+        applyAudioFilters()
+        return false
+    }
 
     /**
      * Install a ten-band equalizer, or remove it when every band and the preamp are at zero.
