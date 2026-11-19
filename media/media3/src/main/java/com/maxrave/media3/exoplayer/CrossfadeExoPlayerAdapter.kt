@@ -49,6 +49,7 @@ import com.maxrave.media3.audio.EightDAudioProcessor
 import com.maxrave.media3.audio.EqualizerAudioProcessor
 import com.maxrave.media3.audio.EqualizerCurve
 import com.maxrave.media3.audio.SleepFadeAudioProcessor
+import com.maxrave.media3.audio.TrailingSilenceAudioProcessor
 import com.maxrave.media3.extension.dropStale
 import com.maxrave.media3.extension.isCorruptMedia
 import com.maxrave.media3.extension.isFullyCached
@@ -499,6 +500,9 @@ internal class CrossfadeExoPlayerAdapter(
      * (see the Audio Focus section) so it survives every player swap (#2155).
      */
     private fun createExoPlayerInstance(): ExoPlayer {
+        // First in the chain: silence is judged on the decoded audio, before the equalizer or an effect
+        // can lift it. The built-in skipper below handles silence at the start and inside the track.
+        val trailingSilence = TrailingSilenceAudioProcessor { internalSkipSilence }
         val sleepFade = SleepFadeAudioProcessor { internalSleepFadeFactor }
         val equalizer = EqualizerAudioProcessor { internalEqualizerCurve }
         val echo = EchoAudioProcessor { internalAudioEffects }
@@ -524,7 +528,7 @@ internal class CrossfadeExoPlayerAdapter(
                                 // preamp that makes room for the boost belongs with it. Then the
                                 // two effects. The sleep fade is the master attenuation; only the 8D pan,
                                 // a gain matrix it commutes with, comes after it (see below).
-                                arrayOf(equalizer, echo, reverb, sleepFade),
+                                arrayOf(trailingSilence, equalizer, echo, reverb, sleepFade),
                                 SilenceSkippingAudioProcessor(
                                     2_000_000,
                                     (20_000 / 2_000_000).toFloat(),
