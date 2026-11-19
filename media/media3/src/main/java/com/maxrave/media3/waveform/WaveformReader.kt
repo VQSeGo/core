@@ -11,9 +11,11 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import com.maxrave.domain.data.player.LiveStreamRegistry
+import com.maxrave.domain.mediaservice.player.MusicEnd
 import com.maxrave.domain.mediaservice.player.WAVEFORM_BARS_PER_SECOND
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.logger.Logger
+import com.maxrave.media3.audio.PeakSoundEndScanner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -53,6 +55,81 @@ internal class WaveformReader(
             val name = mediaId.replace(UNSAFE_FILE_CHARS, "_")
             storedBars(name) ?: decodeLock.withLock { storedBars(name) ?: measure(mediaId, name) }
         }
+
+    /**
+     * Where [mediaId]'s music ends ([MusicEnd]), in ms, by the rule the trailing-silence processor cuts
+     * with ([PeakSoundEndScanner]); null when it cannot be told (no audio yet, a decode failure, no
+     * sound in the last minute).
+     *
+     * The audio is read through the same cache-backed chain as the waveform, so near the end of a
+     * track, which is when the player asks, it comes from what the player has already buffered; only
+     * the last [MusicEnd.TAIL_WINDOW_MS] are decoded. The answer is kept as `<id>.end` beside the
+     * waveform files, apart from them, so the `.wf` files are untouched and a track is measured once.
+     */
+    suspend fun musicEnd(
+        mediaId: String,
+        durationMs: Long,
+    ): Long? =
+        withContext(Dispatchers.IO) {
+            if (mediaId.isBlank() || durationMs <= 0L || LiveStreamRegistry.isLive(mediaId)) return@withContext null
+            val name = mediaId.replace(UNSAFE_FILE_CHARS, "_")
+            storedMusicEnd(name, durationMs)?.let { return@withContext it.musicEndMs }
+            decodeLock.withLock {
+                storedMusicEnd(name, durationMs)?.let { return@withLock it.musicEndMs }
+                measureMusicEnd(mediaId, name, durationMs)
+            }
+        }
+
+    private fun storedMusicEnd(
+        name: String,
+        durationMs: Long,
+    ): MusicEnd.Stored? {
+        val file = File(dir, "$name.end")
+        if (!file.isFile) return null
+        return runCatching { MusicEnd.decode(file.readText(), durationMs) }.getOrNull()
+    }
+
+    private suspend fun measureMusicEnd(
+        mediaId: String,
+        name: String,
+        durationMs: Long,
+    ): Long? {
+        val audio = File(dir, "$name.part")
+        val started = System.nanoTime()
+        return try {
+            if (!download(mediaId, audio)) {
+                Logger.i(TAG, "$mediaId: no audio to measure the music end from")
+                return null
+            }
+            val downloaded = System.nanoTime()
+            val tailStartMs = MusicEnd.tailStartMs(durationMs)
+            val scanner = PeakSoundEndScanner()
+            decodePcm(audio, tailStartMs * 1000L) { buffer, floatPcm, channels, sampleRate, startUs ->
+                scanner.feed(buffer, floatPcm, channels, sampleRate, startUs)
+            } ?: run {
+                Logger.w(TAG, "$mediaId: could not decode the end of the track")
+                return null
+            }
+            // The scanner places sound by the decoder's own timestamps, so the window's start is already in them.
+            val musicEnd = scanner.soundEndUs.takeIf { it > tailStartMs * 1000L }?.let { it / 1000L }
+            File(dir, "$name.end").writeText(MusicEnd.encode(musicEnd, durationMs))
+            Logger.i(
+                TAG,
+                "$mediaId: music ends at ${musicEnd ?: "?"} ms of $durationMs ms " +
+                    "(${musicEnd?.let { durationMs - it } ?: "-"} ms of silence after it); " +
+                    "read ${audio.length() / 1024} KB in ${(downloaded - started) / 1_000_000} ms, " +
+                    "decoded the tail in ${(System.nanoTime() - downloaded) / 1_000_000} ms",
+            )
+            musicEnd
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.w(TAG, "$mediaId: measuring the music end failed: ${e.message}")
+            null
+        } finally {
+            audio.delete()
+        }
+    }
 
     private fun storedBars(name: String): FloatArray? {
         val stored = File(dir, "$name.wf")
@@ -146,6 +223,39 @@ internal class WaveformReader(
     }
 
     private suspend fun decode(file: File): FloatArray? {
+        var sums = DoubleArray(0)
+        var counts = LongArray(0)
+        var barCount = 0
+        val decoded =
+            decodePcm(
+                file = file,
+                fromUs = 0L,
+                onStart = { durationUs ->
+                    barCount = (durationUs / 1_000_000.0 * WAVEFORM_BARS_PER_SECOND).toInt().coerceAtLeast(1)
+                    sums = DoubleArray(barCount)
+                    counts = LongArray(barCount)
+                },
+            ) { buffer, floatPcm, channels, sampleRate, startUs ->
+                accumulate(buffer, floatPcm, channels, sampleRate, startUs, sums, counts)
+            }
+        if (decoded == null) return null
+        val rms = FloatArray(barCount) { if (counts[it] > 0) sqrt(sums[it] / counts[it]).toFloat() else 0f }
+        val loudest = rms.maxOrNull()?.takeIf { it > 0f } ?: return null
+        return FloatArray(barCount) { (rms[it] / loudest).coerceIn(MIN_LEVEL, 1f) }
+    }
+
+    /**
+     * Decodes [file]'s audio from [fromUs] (the sync point before it) to its end with MediaExtractor
+     * and MediaCodec, handing each output buffer to [onBuffer] in the decoder's byte order, placed by
+     * its presentation time. [onStart] gets the track's duration before the first buffer. Returns the
+     * duration in µs, or null when the file has no decodable audio.
+     */
+    private suspend fun decodePcm(
+        file: File,
+        fromUs: Long,
+        onStart: (durationUs: Long) -> Unit = {},
+        onBuffer: (buffer: ByteBuffer, floatPcm: Boolean, channels: Int, sampleRate: Int, startUs: Long) -> Unit,
+    ): Long? {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -159,9 +269,8 @@ internal class WaveformReader(
             val mime = format.getString(MediaFormat.KEY_MIME) ?: return null
             val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) else 0L
             if (durationUs <= 0L) return null
-            val barCount = (durationUs / 1_000_000.0 * WAVEFORM_BARS_PER_SECOND).toInt().coerceAtLeast(1)
-            val sums = DoubleArray(barCount)
-            val counts = LongArray(barCount)
+            if (fromUs > 0L) extractor.seekTo(fromUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            onStart(durationUs)
 
             val decoder = MediaCodec.createDecoderByType(mime)
             codec = decoder
@@ -202,15 +311,13 @@ internal class WaveformReader(
                     if (output != null && info.size > 0) {
                         output.position(info.offset)
                         output.limit(info.offset + info.size)
-                        accumulate(output.order(ByteOrder.nativeOrder()), floatPcm, channels, sampleRate, info.presentationTimeUs, sums, counts)
+                        onBuffer(output.order(ByteOrder.nativeOrder()), floatPcm, channels, sampleRate, info.presentationTimeUs)
                     }
                     decoder.releaseOutputBuffer(outIndex, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
                 }
             }
-            val rms = FloatArray(barCount) { if (counts[it] > 0) sqrt(sums[it] / counts[it]).toFloat() else 0f }
-            val loudest = rms.maxOrNull()?.takeIf { it > 0f } ?: return null
-            return FloatArray(barCount) { (rms[it] / loudest).coerceIn(MIN_LEVEL, 1f) }
+            return durationUs
         } finally {
             codec?.let {
                 runCatching { it.stop() }

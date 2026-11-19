@@ -40,6 +40,7 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.mediaservice.player.MediaPlayerListener
+import com.maxrave.domain.mediaservice.player.MusicEnd
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.logger.Logger
 import com.maxrave.media3.waveform.WaveformReader
@@ -221,6 +222,15 @@ internal class CrossfadeExoPlayerAdapter(
 
     @Volatile
     private var internalSkipSilence = false
+
+    /**
+     * Measured music ends by media id ([WaveformReader.musicEnd]); -1 when it could not be told. Read
+     * only while skip silence and crossfade are both on.
+     */
+    private val musicEnds = ConcurrentHashMap<String, Long>()
+
+    /** Media ids whose music end has been asked for in this session, so each is measured once. */
+    private val musicEndRequested: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     // Position tracking - updated periodically, not on every query
     @Volatile
@@ -2219,24 +2229,29 @@ internal class CrossfadeExoPlayerAdapter(
                 // If the secondary player wasn't precached, URL resolution + buffering may
                 // have consumed part of the crossfade window. Use the lesser of configured
                 // duration and actual remaining time so the animation ends when the old track does.
+                // Remaining up to where the outgoing music ends: the music end with skip silence on.
+                var fadeEndLog = ""
                 val actualTimeRemaining =
                     currentPlayer?.let { player ->
                         val dur = player.duration
                         val pos = player.currentPosition
-                        // Divide by playback speed: at 2x speed, remaining wall-clock time is halved
-                        val speed = internalPlaybackSpeed.coerceAtLeast(0.1f)
-                        if (dur > 0 && pos >= 0) ((dur - pos) / speed).toLong() else resolvedConfigDurationMs.toLong()
+                        if (dur > 0 && pos >= 0) {
+                            val fadeEnd = fadeEndMs(player, dur)
+                            if (fadeEnd < dur) fadeEndLog = ", timed to the music end at ${fadeEnd}ms of ${dur}ms (position ${pos}ms)"
+                            // Divide by playback speed: at 2x speed, remaining wall-clock time is halved
+                            MusicEnd.remainingMs(pos, fadeEnd, internalPlaybackSpeed)
+                        } else {
+                            resolvedConfigDurationMs.toLong()
+                        }
                     } ?: resolvedConfigDurationMs.toLong()
 
-                val effectiveCrossfadeDurationMs =
-                    minOf(resolvedConfigDurationMs.toLong(), actualTimeRemaining)
-                        .coerceAtLeast(1000L)
-                        .toInt()
+                val effectiveCrossfadeDurationMs = MusicEnd.effectiveFadeMs(resolvedConfigDurationMs.toLong(), actualTimeRemaining)
 
-                Logger.d(
+                // Info, not debug: whether a fade was timed to the music shows in a release log too.
+                Logger.i(
                     TAG,
                     "Crossfade duration: configured=${resolvedConfigDurationMs}ms, " +
-                        "actualRemaining=${actualTimeRemaining}ms, effective=${effectiveCrossfadeDurationMs}ms",
+                        "actualRemaining=${actualTimeRemaining}ms, effective=${effectiveCrossfadeDurationMs}ms$fadeEndLog",
                 )
 
                 // Perform crossfade animation with effective duration
@@ -2413,6 +2428,8 @@ internal class CrossfadeExoPlayerAdapter(
                                 if (dur > 0) cachedDuration = dur
                                 if (buf >= 0) cachedBufferedPosition = buf
 
+                                if (!isCrossfading) measureMusicEndIfDue(player, pos, dur)
+
                                 // Check if should trigger crossfade.
                                 // Add a preparation buffer (3s) so that if the next track
                                 // is NOT precached, URL resolution + buffering time doesn't
@@ -2431,17 +2448,17 @@ internal class CrossfadeExoPlayerAdapter(
                                     !isCurrentTrackTooShortForCrossfade() &&
                                     !isWithinAlbum()
                                 ) {
+                                    // Up to the music end when skip silence is on and it is known, so
+                                    // the old track fades out over its last music, not its silence.
                                     // Account for playback speed: at higher speed, media time
                                     // is consumed faster, so wall-clock remaining is shorter
-                                    val speed = internalPlaybackSpeed.coerceAtLeast(0.1f)
-                                    val timeRemaining = ((dur - pos) / speed).toLong()
+                                    val timeRemaining = MusicEnd.remainingMs(pos, fadeEndMs(player, dur), internalPlaybackSpeed)
                                     val nextVideoId = playlist.getOrNull(getNextMediaItemIndex())?.mediaId
                                     val isPrecached = nextVideoId != null && precachedPlayers.containsKey(nextVideoId)
                                     // If next track is precached, trigger at exactly crossfadeDurationMs.
                                     // If NOT precached, trigger 3s earlier to allow preparation time.
                                     val preparationBufferMs = if (isPrecached) 0L else 3000L
-                                    val triggerThreshold = crossfadeDurationMs.toLong() + preparationBufferMs
-                                    if (timeRemaining in 1..triggerThreshold) {
+                                    if (MusicEnd.shouldStartCrossfade(timeRemaining, crossfadeDurationMs.toLong(), preparationBufferMs)) {
                                         if (hasNextMediaItem()) {
                                             val nextIndex = getNextMediaItemIndex()
                                             triggerCrossfadeTransition(nextIndex)
@@ -2462,6 +2479,53 @@ internal class CrossfadeExoPlayerAdapter(
     private fun stopPositionUpdates() {
         positionUpdateJob?.cancel()
         positionUpdateJob = null
+    }
+
+    // ========== Internal: Music end (skip silence + crossfade) ==========
+
+    /** The measured music end of [mediaId], or null when it is not known. */
+    private fun musicEndOf(mediaId: String): Long? = musicEnds[mediaId]?.takeIf { it > 0L }
+
+    /**
+     * Where a crossfade out of [player] should finish: its music end while skip silence is on and that
+     * is known, the file's end otherwise (see [MusicEnd.fadeEndMs]). With crossfade off nothing reads
+     * it: the trailing-silence processor ends the track where its music ends by itself.
+     */
+    private fun fadeEndMs(
+        player: ExoPlayer,
+        durationMs: Long,
+    ): Long {
+        if (!internalSkipSilence) return durationMs
+        val mediaId = player.currentMediaItem?.mediaId ?: return durationMs
+        return MusicEnd.fadeEndMs(durationMs, musicEndOf(mediaId))
+    }
+
+    /**
+     * Measures where the current track's music ends once it nears its end ([MusicEnd.shouldMeasure]),
+     * when a crossfade with skip silence on is going to need it. The processor drops the closing
+     * silence only as it is reached, too late to time a fade from, so it is found ahead of time.
+     */
+    private fun measureMusicEndIfDue(
+        player: ExoPlayer,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        if (!crossfadeEnabled || !internalSkipSilence || isCurrentTrackLive() || isCurrentTrackVideo()) return
+        val mediaId = player.currentMediaItem?.mediaId ?: return
+        if (mediaId in musicEndRequested || !MusicEnd.shouldMeasure(durationMs, positionMs)) return
+        musicEndRequested += mediaId
+        coroutineScope.launch {
+            val end =
+                try {
+                    waveformReader.musicEnd(mediaId, durationMs)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Logger.w(TAG, "Music end of $mediaId not measured: ${e.message}")
+                    null
+                }
+            musicEnds[mediaId] = end ?: -1L
+        }
     }
 
     // ========== Internal: Precaching ==========
