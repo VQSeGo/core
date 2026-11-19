@@ -61,35 +61,50 @@ internal fun eightDGraph(
 // result in `@label:lavfi=[ ]` and hands it to the `af` property.
 
 /**
- * The "skip silence" graph: `silenceremove`, so silence is trimmed at the start, inside the track
- * and at its end, by the same rule everywhere.
+ * The "skip silence" graph: `silenceremove`, so long silence is trimmed inside the track and at its
+ * end, and leading silence at the start.
  *
- * How the filter counts, measured with ffmpeg rather than read off its manual: a stretch of silence
- * passes through for [SILENCE_MIN_SECONDS], then the rest is cut and [SILENCE_KEEP_SECONDS] more is
- * left in, so a silence of any length comes out at the sum of the two (0.6 s here) and one shorter
- * than [SILENCE_MIN_SECONDS] is not touched. Leading silence is removed outright.
+ * How the filter counts, measured with ffmpeg and libmpv rather than read off its manual: a stretch
+ * of silence passes through for about [SILENCE_MIN_SECONDS], then the rest is cut, so a silence of
+ * any length comes out at about that long and one shorter is not touched. Two seconds is the minimum
+ * Android's skipper uses: a dramatic pause inside a song plays as written (measured: 1.5 s stays
+ * 1.5 s; 3 s plays ~2 s). The silence at the very end of a track is not left to this filter: the
+ * player measures where the music ends (`MusicEnd`) and ends the track there; the filter's own cut of
+ * a long tail is the fallback when that is not known.
  *
  * - Anything quieter than [SILENCE_THRESHOLD_DB] counts as silence, judged on RMS over the filter's
  *   default 20 ms window so a single quiet sample inside music does not.
+ * - [trimStart] removes the silence at the start outright (`start_periods=1`). It is only for playback
+ *   from the top: the filter graph is rebuilt on every seek, so after a seek into a quiet passage it
+ *   would jump to the next sound (3.5 s into a 3–6 s silence came out at 6.45 s).
  * - `stop_periods=-1` is "every stretch, not only the first", which is what also takes the stretch at
  *   the end of the track.
  * - `timestamp=copy` keeps the audio's own timestamps, leaving a gap where silence was cut. With the
  *   default (`write`) the stream would be re-stamped without the gaps, mpv's playback position would
  *   fall behind the real timeline by everything skipped, and the seek bar would never reach the end.
  */
-internal fun silenceRemoveGraph(): String =
+internal fun silenceRemoveGraph(trimStart: Boolean = true): String =
     "silenceremove=" +
-        "start_periods=1:start_duration=0.05:start_threshold=${SILENCE_THRESHOLD_DB}dB:" +
-        "start_silence=${mpvNumber(SILENCE_KEEP_SECONDS)}:" +
+        (
+            if (trimStart) {
+                "start_periods=1:start_duration=0.05:start_threshold=${SILENCE_THRESHOLD_DB}dB:" +
+                    "start_silence=${mpvNumber(SILENCE_KEEP_SECONDS)}:"
+            } else {
+                ""
+            }
+        ) +
         "stop_periods=-1:stop_duration=${mpvNumber(SILENCE_MIN_SECONDS)}:stop_threshold=${SILENCE_THRESHOLD_DB}dB:" +
         "stop_silence=${mpvNumber(SILENCE_KEEP_SECONDS)}:" +
         "detection=rms:timestamp=copy"
 
 /** Quieter than this is silence. Android's skipper uses -42 dBFS on the peak; this is RMS, so a little lower. */
-private const val SILENCE_THRESHOLD_DB = -45
+internal const val SILENCE_THRESHOLD_DB = -45
 
-/** Silence this long goes by untouched; what comes after it is cut. */
-private const val SILENCE_MIN_SECONDS = 0.5f
+/** The window the filter takes its RMS over (its default), which [MpvMusicEndReader] measures with too. */
+internal const val SILENCE_WINDOW_SECONDS = 0.02
+
+/** Silence this long goes by untouched; what comes after it is cut. Same minimum as Android's skipper. */
+private const val SILENCE_MIN_SECONDS = 2f
 
 /** Silence that is left in place after the cut. */
 private const val SILENCE_KEEP_SECONDS = 0.1f

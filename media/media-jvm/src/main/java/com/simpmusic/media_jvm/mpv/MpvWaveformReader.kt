@@ -3,8 +3,6 @@ package com.simpmusic.media_jvm.mpv
 import com.maxrave.domain.mediaservice.player.WAVEFORM_BARS_PER_SECOND
 import com.maxrave.logger.Logger
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -101,56 +99,11 @@ internal object MpvWaveformReader {
         levels: File,
         pcm: File,
     ): Boolean {
-        val lib = MpvLibrary.INSTANCE ?: return false
-        val ctx = lib.mpv_create() ?: return false
-        try {
-            fun option(
-                name: String,
-                value: String,
-            ): Boolean {
-                val rc = lib.mpv_set_option_string(ctx, name, value)
-                if (rc < 0) Logger.w(TAG, "mpv_set_option_string($name) failed: ${lib.mpv_error_string(rc)}")
-                return rc >= 0
-            }
-            option("terminal", "no")
-            // Absent from lua-less builds, where it is off anyway.
-            lib.mpv_set_option_string(ctx, "ytdl", "no")
-            option("vid", "no")
-            option("vo", "null")
-            if (!option("ao", "pcm")) return false
-            if (!option("ao-pcm-file", pcm.absolutePath)) return false
-            option("ao-pcm-waveheader", "no")
-            // Same reconnect behaviour as the playing handles (see MpvPlayer.create).
-            option("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=30")
-            val graph =
-                "lavfi=[aresample=$SAMPLE_RATE,aformat=sample_fmts=s16:channel_layouts=mono," +
-                    "asetnsamples=n=$SAMPLES_PER_BAR:p=0,astats=metadata=1:reset=1," +
-                    "ametadata=mode=print:key=lavfi.astats.1.RMS_level:file=${lavfiEscapePath(levels.absolutePath)}]"
-            if (!option("af", graph)) return false
-            if (lib.mpv_initialize(ctx) < 0) return false
-            if (lib.mpv_command(ctx, arrayOf("loadfile", url, null)) < 0) return false
-            val deadline = System.currentTimeMillis() + TIMEOUT_MS
-            while (System.currentTimeMillis() < deadline) {
-                currentCoroutineContext().ensureActive()
-                val pointer = lib.mpv_wait_event(ctx, 0.25) ?: continue
-                val event = MpvEvent(pointer).apply { read() }
-                when (event.event_id) {
-                    MpvEventId.END_FILE -> {
-                        val endFile = event.data?.let { MpvEventEndFile(it).apply { read() } }
-                        if (endFile?.reason == MpvEndFileReason.EOF) return true
-                        // An error here is how a slice without the three filters shows up, too.
-                        Logger.w(TAG, "Measuring stopped early: reason ${endFile?.reason}, ${endFile?.error?.let { lib.mpv_error_string(it) }}")
-                        return false
-                    }
-                    MpvEventId.SHUTDOWN -> return false
-                }
-            }
-            Logger.w(TAG, "Gave up measuring after ${TIMEOUT_MS / 1000} s")
-            return false
-        } finally {
-            // Tears the filter graph down too, which is what flushes [levels] to disk.
-            lib.mpv_terminate_destroy(ctx)
-        }
+        val graph =
+            "lavfi=[aresample=$SAMPLE_RATE,aformat=sample_fmts=s16:channel_layouts=mono," +
+                "asetnsamples=n=$SAMPLES_PER_BAR:p=0,astats=metadata=1:reset=1," +
+                "ametadata=mode=print:key=lavfi.astats.1.RMS_level:file=${lavfiEscapePath(levels.absolutePath)}]"
+        return mpvDecodeToPcm(TAG, url, pcm, listOf("af" to graph), TIMEOUT_MS)
     }
 
     /**

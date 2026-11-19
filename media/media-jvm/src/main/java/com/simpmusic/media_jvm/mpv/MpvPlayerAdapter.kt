@@ -17,6 +17,7 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
 import com.maxrave.domain.mediaservice.player.MediaPlayerListener
+import com.maxrave.domain.mediaservice.player.MusicEnd
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.logger.Logger
 import com.simpmusic.media_jvm.audio.ReverbIrFiles
@@ -262,6 +263,18 @@ class MpvPlayerAdapter(
 
     /** Last index a crossfade was refused for, so the refusal is logged once instead of per poll. */
     private var lastBlockedCrossfadeIndex = -1
+
+    /**
+     * Measured music ends by video id ([MpvMusicEndReader]); -1 when it could not be told. Read only
+     * while skip silence is in force.
+     */
+    private val musicEnds = ConcurrentHashMap<String, Long>()
+
+    /** Video ids whose music end has been asked for in this session, so each is measured once. */
+    private val musicEndRequested: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** The handle [checkMusicEnd] already ended at its music end, so it is ended once. */
+    private var musicEndHandledFor: MpvPlayer? = null
 
     /**
      * Set only while [commitIncomingAsCurrent] tears down a fade. [performCrossfade]'s
@@ -1825,6 +1838,11 @@ class MpvPlayerAdapter(
                             Logger.d(TAG, "Ignoring finished() during crossfade (old player ended)")
                             return@launch
                         }
+                        // Already ended at its music end; this is the silence after it running out.
+                        if (musicEndHandledFor === player) {
+                            Logger.d(TAG, "Ignoring finished() after the track was ended at its music end")
+                            return@launch
+                        }
                         if (resumeAfterEarlyEnd(player)) return@launch
                         transitionToState(InternalState.ENDED)
                         handleTrackEndInternal()
@@ -2296,23 +2314,28 @@ class MpvPlayerAdapter(
                     val resolvedConfigDurationMs = crossfadeDurationMs
 
                     // Calculate effective crossfade duration based on ACTUAL remaining time.
+                    // Remaining up to where the outgoing music ends: the music end with skip silence on.
+                    var fadeEndLog = ""
                     val actualTimeRemaining =
                         currentPlayer?.let { player ->
                             val dur = player.length
                             val pos = player.time
-                            if (dur > 0 && pos >= 0) (dur - pos) else resolvedConfigDurationMs.toLong()
+                            if (dur > 0 && pos >= 0) {
+                                val fadeEnd = fadeEndMs(player, dur)
+                                if (fadeEnd < dur) fadeEndLog = ", timed to the music end at ${fadeEnd}ms of ${dur}ms (position ${pos}ms)"
+                                MusicEnd.remainingMs(pos, fadeEnd)
+                            } else {
+                                resolvedConfigDurationMs.toLong()
+                            }
                         } ?: resolvedConfigDurationMs.toLong()
 
-                    val effectiveCrossfadeDurationMs =
-                        minOf(
-                            resolvedConfigDurationMs.toLong(),
-                            actualTimeRemaining,
-                        ).coerceAtLeast(1000L).toInt()
+                    val effectiveCrossfadeDurationMs = MusicEnd.effectiveFadeMs(resolvedConfigDurationMs.toLong(), actualTimeRemaining)
 
-                    Logger.d(
+                    // Info, not debug: whether a fade was timed to the music shows in a release log too.
+                    Logger.i(
                         TAG,
                         "Crossfade duration: configured=${resolvedConfigDurationMs}ms, " +
-                            "actualRemaining=${actualTimeRemaining}ms, effective=${effectiveCrossfadeDurationMs}ms",
+                            "actualRemaining=${actualTimeRemaining}ms, effective=${effectiveCrossfadeDurationMs}ms$fadeEndLog",
                     )
 
                     performCrossfade(
@@ -2619,12 +2642,13 @@ class MpvPlayerAdapter(
                                     val dur = player.length
                                     val pos = player.time
                                     if (dur > 0 && pos > 0) {
-                                        val timeRemaining = dur - pos
+                                        // Up to the music end when skip silence is on and it is known,
+                                        // so the old track fades out over its last music, not its silence.
+                                        val timeRemaining = MusicEnd.remainingMs(pos, fadeEndMs(player, dur))
                                         val nextVideoId = playlist.getOrNull(getNextMediaItemIndex())?.mediaId
                                         val isPrecached = nextVideoId != null && precachedPlayers.containsKey(nextVideoId)
                                         val preparationBufferMs = if (isPrecached) 0L else 3000L
-                                        val triggerThreshold = crossfadeDurationMs.toLong() + preparationBufferMs
-                                        if (timeRemaining in 1..triggerThreshold) {
+                                        if (MusicEnd.shouldStartCrossfade(timeRemaining, crossfadeDurationMs.toLong(), preparationBufferMs)) {
                                             if (hasNextMediaItem()) {
                                                 val nextIndex = getNextMediaItemIndex()
                                                 triggerCrossfadeTransition(nextIndex)
@@ -2633,6 +2657,8 @@ class MpvPlayerAdapter(
                                     }
                                 }
                             }
+
+                            if (!isCrossfading) currentPlayer?.let { checkMusicEnd(it) }
                         }
                     } catch (_: Exception) {
                         // Ignore query errors
@@ -2646,6 +2672,67 @@ class MpvPlayerAdapter(
     private fun stopPositionUpdates() {
         positionUpdateJob?.cancel()
         positionUpdateJob = null
+    }
+
+    // ========== Music end (skip silence) ==========
+
+    /** The measured music end of [videoId], or null when it is not known. */
+    private fun musicEndOf(videoId: String): Long? = musicEnds[videoId]?.takeIf { it > 0L }
+
+    /**
+     * Where a crossfade out of [player] should finish: its music end while skip silence is in force
+     * and that is known, the file's end otherwise (see [MusicEnd.fadeEndMs]).
+     */
+    private fun fadeEndMs(
+        player: MpvPlayer,
+        durationMs: Long,
+    ): Long {
+        if (!isSkipSilenceInForce()) return durationMs
+        val videoId = playerOrigins[player]?.first ?: return durationMs
+        return MusicEnd.fadeEndMs(durationMs, musicEndOf(videoId))
+    }
+
+    /**
+     * With skip silence in force, measures where the current track's music ends once it nears its end
+     * ([MusicEnd.shouldMeasure]), and ends the track there when nothing else has (no crossfade, or one
+     * not allowed here). `silenceremove` only cuts a silence once [silenceRemoveGraph]'s two seconds of
+     * it have played, so without this a short tail would be heard whole and a long one for two seconds.
+     * When the music end is not known the filter's own cut and mpv's end of file still end the track.
+     * Called from the position loop, outside a crossfade.
+     */
+    private fun checkMusicEnd(player: MpvPlayer) {
+        if (!isSkipSilenceInForce() || isCurrentTrackLive() || isCurrentTrackVideo()) return
+        val videoId = playerOrigins[player]?.first ?: return
+        val dur = player.length
+        val pos = player.time
+        if (dur <= 0L || pos < 0L) return
+        if (videoId !in musicEndRequested && MusicEnd.shouldMeasure(dur, pos)) {
+            musicEndRequested += videoId
+            coroutineScope.launch {
+                val end =
+                    try {
+                        MpvMusicEndReader.read(videoId, dur) { waveformSourceUrl(videoId) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Logger.w(TAG, "Music end of $videoId not measured: ${e.message}")
+                        null
+                    }
+                musicEnds[videoId] = end ?: -1L
+            }
+        }
+        val musicEnd = musicEndOf(videoId)
+        if (musicEndHandledFor === player) {
+            // Back before the music end on the same handle (a seek): it may end there again.
+            if (pos < MusicEnd.fadeEndMs(dur, musicEnd)) musicEndHandledFor = null
+            return
+        }
+        if (internalState == InternalState.PLAYING && MusicEnd.isPastMusicEnd(pos, dur, musicEnd)) {
+            musicEndHandledFor = player
+            Logger.i(TAG, "$videoId: music ended at ${musicEnd}ms, position ${pos}ms of ${dur}ms; ending the track instead of playing its silence")
+            transitionToState(InternalState.ENDED)
+            handleTrackEndInternal()
+        }
     }
 
     /**
