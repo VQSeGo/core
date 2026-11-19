@@ -74,6 +74,7 @@ internal object MpvMusicEndReader {
             Logger.i(TAG, "$mediaId: no audio source to measure the music end from")
             return null
         }
+        Logger.i(TAG, "measuring the music end of $mediaId from ${if (url.startsWith("http")) "the stream" else "a local file"}")
         val pcm = File(dir, "$name.endpcm")
         val started = System.nanoTime()
         try {

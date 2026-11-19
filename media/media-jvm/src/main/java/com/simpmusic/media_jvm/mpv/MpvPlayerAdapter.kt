@@ -2053,10 +2053,28 @@ class MpvPlayerAdapter(
      * instead of fading in under the outgoing song — so the transition takes the normal
      * (non-crossfade) path.
      */
-    private fun isNextTrackVideo(): Boolean = watchVideoEnabled && playlist.getOrNull(getNextMediaItemIndex())?.isVideo() == true
+    private fun isNextTrackVideo(): Boolean {
+        if (!watchVideoEnabled) return false
+        val next = playlist.getOrNull(getNextMediaItemIndex()) ?: return false
+        return playsAsVideo(
+            watchVideoEnabled = true,
+            itemIsVideo = next.isVideo(),
+            handleHasVideo = precachedPlayers[next.mediaId]?.player?.let { it.videoFrames != null },
+            downloaded = downloadedFile(next.mediaId) != null,
+        )
+    }
 
     /** Same skip rule for the CURRENT track: a video should play out to its last frame instead of fading out under the incoming song. */
-    private fun isCurrentTrackVideo(): Boolean = watchVideoEnabled && currentMediaItem?.isVideo() == true
+    private fun isCurrentTrackVideo(): Boolean {
+        if (!watchVideoEnabled) return false
+        val item = currentMediaItem ?: return false
+        return playsAsVideo(
+            watchVideoEnabled = true,
+            itemIsVideo = item.isVideo(),
+            handleHasVideo = currentPlayer?.let { currentPlayerIsVideo },
+            downloaded = downloadedFile(item.mediaId) != null,
+        )
+    }
 
     /**
      * A live broadcast never reaches an end to fade out of. mpv reports its duration as the length of
@@ -2570,6 +2588,9 @@ class MpvPlayerAdapter(
         /** Played time after which a track heard from the network is saved to the listening cache. */
         private const val CACHE_AFTER_LISTENED_MS = 30_000L
 
+        /** The position loop reports a failing step at most this often. */
+        private const val POLL_ERROR_LOG_INTERVAL_NS = 60_000_000_000L
+
         /** An end of file further than this from the track's length means the stream died, not that it finished. */
         private const val EARLY_END_MARGIN_MS = 5_000L
     }
@@ -2590,6 +2611,8 @@ class MpvPlayerAdapter(
      * mpv's observed `time-pos` handles position caching, but this loop is still needed
      * for crossfade trigger detection.
      */
+    private var lastPollErrorLogNs = 0L
+
     private fun startPositionUpdates() {
         stopPositionUpdates()
 
@@ -2660,8 +2683,16 @@ class MpvPlayerAdapter(
 
                             if (!isCrossfading) currentPlayer?.let { checkMusicEnd(it) }
                         }
-                    } catch (_: Exception) {
-                        // Ignore query errors
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // A failed query must not stop the loop, but a step in it that throws on every pass
+                        // (a crossfade trigger, the music end) would otherwise be silent. At most once a minute.
+                        val now = System.nanoTime()
+                        if (now - lastPollErrorLogNs >= POLL_ERROR_LOG_INTERVAL_NS || lastPollErrorLogNs == 0L) {
+                            lastPollErrorLogNs = now
+                            Logger.w(TAG, "Position loop step failed: ${e::class.simpleName}: ${e.message}")
+                        }
                     }
 
                     delay(50) // Update every 50ms
