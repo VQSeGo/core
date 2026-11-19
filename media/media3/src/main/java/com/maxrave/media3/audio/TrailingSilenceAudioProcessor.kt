@@ -49,8 +49,16 @@ class TrailingSilenceAudioProcessor(
 
     override fun onQueueEndOfStream() {
         val kernel = kernel ?: return
-        val dropped = kernel.finish(trim = enabled(), allocate = ::replaceOutputBuffer)
-        if (dropped > 0) Logger.i(TAG, "Skipped ${kernel.durationMs(dropped)} ms of silence at the end of the track")
+        val trim = enabled()
+        val held = kernel.heldBytes
+        val dropped = kernel.finish(trim = trim, allocate = ::replaceOutputBuffer)
+        // One line per track end, whether or not anything was cut: without it a quiet log cannot be
+        // told apart from a processor that never ran.
+        Logger.i(
+            TAG,
+            "End of track: ${kernel.durationMs(held)} ms of silence at the end, " +
+                "${kernel.durationMs(dropped)} ms skipped${if (trim) "" else " (setting off)"}",
+        )
     }
 
     /** A seek or a new stream: what was held back belongs to a position that no longer plays. */

@@ -424,7 +424,14 @@ class JvmMediaPlayerHandlerImpl(
         songEntityJob = Job()
         getFormatJob = Job()
         jobWatchtime = Job()
-        skipSilent = runBlocking { dataStoreManager.skipSilent.first() == TRUE }
+        // Handed to the player as well as remembered: the field alone never reached it. Collected so the
+        // switch takes effect in the track that is playing.
+        backgroundScope.launch {
+            dataStoreManager.skipSilent.distinctUntilChanged().collect { value ->
+                skipSilent = value == TRUE
+                player.skipSilenceEnabled = skipSilent
+            }
+        }
         // Collected rather than read once like the settings around it: the equalizer is adjusted
         // while music is playing, and a curve that only takes effect after a restart is useless
         // for judging what you just changed.

@@ -332,7 +332,15 @@ internal class MediaServiceHandlerImpl(
         songEntityJob = Job()
         getFormatJob = Job()
         jobWatchtime = Job()
-        skipSilent = runBlocking { dataStoreManager.skipSilent.first() == TRUE }
+        // The switch used to be read into this field and never handed to the player, so "skip silence"
+        // did nothing at all. Collected rather than read once: it has to take effect in the track
+        // that is playing. ExoPlayer is main-thread only, hence the hop.
+        backgroundScope.launch {
+            dataStoreManager.skipSilent.distinctUntilChanged().collect { value ->
+                skipSilent = value == TRUE
+                withContext(Dispatchers.Main) { player.skipSilenceEnabled = skipSilent }
+            }
+        }
         // Collected rather than read once like the settings around it: the equalizer is adjusted
         // while music is playing, and a curve that only takes effect after a restart is useless
         // for judging what you just changed.
