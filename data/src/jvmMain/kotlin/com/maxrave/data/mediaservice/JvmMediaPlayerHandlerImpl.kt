@@ -38,6 +38,7 @@ import com.maxrave.domain.data.player.PlayerConstants
 import com.maxrave.domain.data.player.PlayerError
 import com.maxrave.domain.data.player.ReverbEffect
 import com.maxrave.domain.data.player.ReverbPreset
+import com.maxrave.domain.data.player.loudnessGainDb
 import com.maxrave.domain.extension.isAfter
 import com.maxrave.domain.extension.isVideo
 import com.maxrave.domain.extension.now
@@ -121,6 +122,12 @@ import kotlin.math.pow
 import kotlin.time.Duration.Companion.milliseconds
 
 private val TAG = "JvmMediaPlayerHandler"
+
+/**
+ * The most "normalize volume" will raise a quiet track on Desktop. The bundled Linux libmpv has no limiter
+ * filter, so a boost can only be as big as the track's unknown headroom; a cut has no limit.
+ */
+private const val MAX_NORMALIZE_BOOST_DB = 3f
 
 // Ceiling on how far the published position may run ahead of the last real reading from mpv.
 // Sized just above the largest staircase step measured on this machine (~520 ms), so an ordinary
@@ -431,6 +438,10 @@ class JvmMediaPlayerHandlerImpl(
                 skipSilent = value == TRUE
                 player.skipSilenceEnabled = skipSilent
             }
+        }
+        // Switching "normalize volume" while a track plays takes effect in that track, not the next one.
+        backgroundScope.launch {
+            dataStoreManager.normalizeVolume.distinctUntilChanged().collect { mayBeNormalizeVolume() }
         }
         // Collected rather than read once like the settings around it: the equalizer is adjusted
         // while music is playing, and a curve that only takes effect after a restart is useless
@@ -2530,77 +2541,32 @@ class JvmMediaPlayerHandlerImpl(
     }
 
     override fun mayBeNormalizeVolume() {
-//        runBlocking {
-//            normalizeVolume = dataStoreManager.normalizeVolume.first() == TRUE
-//        }
-//        if (!normalizeVolume) {
-//            // TODO: loudness enhancer
-//            volumeNormalizationJob?.cancel()
-//            player.volume = 1f
-//            return
-//        }
-//
-//        if (loudnessEnhancer == null && player.audioSessionId != PlayerConstants.AUDIO_SESSION_ID_UNSET) {
-//            try {
-//                loudnessEnhancer = LoudnessEnhancer(player.audioSessionId)
-//            } catch (e: Exception) {
-//                Logger.e(TAG, "mayBeNormalizeVolume: ${e.message}")
-//                e.printStackTrace()
-//            }
-//        }
-
-//        player.currentMediaItem?.mediaId?.let { songId ->
-//            val videoId =
-//                if (songId.contains("Video")) {
-//                    songId.removePrefix("Video")
-//                } else {
-//                    songId
-//                }
-//            volumeNormalizationJob?.cancel()
-//            volumeNormalizationJob =
-//                coroutineScope.launch(Dispatchers.Main) {
-//                    fun Float?.toMb() = ((this ?: 0f) * 100).toInt()
-//                    streamRepository
-//                        .getFormatFlow(videoId)
-//                        .cancellable()
-//                        .distinctUntilChanged()
-//                        .collectLatest { format ->
-//                            if (format != null) {
-//                                val loudnessMb =
-//                                    format.loudnessDb.toMb().let {
-//                                        if (it !in -2000..2000) {
-//                                            0
-//                                        } else {
-//                                            it
-//                                        }
-//                                    }
-//                                Logger.d(TAG, "Loudness: ${format.loudnessDb} db, $loudnessMb")
-//                                try {
-//                                    loudnessEnhancer?.setTargetGain(0f.toMb() - loudnessMb)
-//                                    loudnessEnhancer?.enabled = true
-//                                    Logger.w(
-//                                        TAG,
-//                                        "mayBeNormalizeVolume: ${loudnessEnhancer?.targetGain}",
-//                                    )
-//                                } catch (e: Exception) {
-//                                    Logger.e(TAG, "mayBeNormalizeVolume: ${e.message}")
-//                                    e.printStackTrace()
-//                                }
-//                                try {
-//                                    secondLoudnessEnhancer?.setTargetGain(0f.toMb() - loudnessMb)
-//                                    secondLoudnessEnhancer?.enabled = true
-//                                    Logger.w(
-//                                        TAG,
-//                                        "mayBeNormalizeVolume: ${secondLoudnessEnhancer?.targetGain}",
-//                                    )
-//                                } catch (e: Exception) {
-//                                    Logger.e(TAG, "mayBeNormalizeVolume: ${e.message}")
-//                                    e.printStackTrace()
-//                                }
-//                            }
-//                        }
-//                }
-//        }
+        runBlocking {
+            normalizeVolume = dataStoreManager.normalizeVolume.first() == TRUE
+        }
+        volumeNormalizationJob?.cancel()
+        volumeNormalizationJob = null
+        if (!normalizeVolume) {
+            player.loudnessGainDb = 0f
+            return
+        }
+        val videoId = player.currentMediaItem?.mediaId?.removePrefix("Video") ?: return
+        volumeNormalizationJob =
+            coroutineScope.launch {
+                // The format arrives after the track starts (it comes with the stream), so the gain
+                // is applied when it does, and again if the format is refreshed.
+                streamRepository
+                    .getFormatFlow(videoId)
+                    .cancellable()
+                    .distinctUntilChanged()
+                    .collectLatest { format ->
+                        if (format != null) {
+                            val gain = loudnessGainDb(format.loudnessDb, maxBoostDb = MAX_NORMALIZE_BOOST_DB)
+                            Logger.d(TAG, "Loudness: ${format.loudnessDb} dB, gain $gain dB")
+                            player.loudnessGainDb = gain
+                        }
+                    }
+            }
     }
 
     override fun mayBeSavePlaybackState() {

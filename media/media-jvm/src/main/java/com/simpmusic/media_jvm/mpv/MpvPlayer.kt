@@ -101,6 +101,9 @@ class MpvPlayer private constructor(
         /** Userdata tag for every `mpv_observe_property` registration; we dispatch by name. */
         private const val OBSERVE_USERDATA = 1L
 
+        /** mpv's own range for `volume-gain` is ±150 dB; a loudness correction never comes near it. */
+        private const val VOLUME_GAIN_LIMIT_DB = 150.0
+
         /**
          * `MPV_ERROR_OPTION_NOT_FOUND` from client.h — the option name is unknown to this build.
          *
@@ -697,6 +700,19 @@ class MpvPlayer private constructor(
             sleepPercent = volume.coerceIn(0, 100)
             applyVolume()
         }
+    }
+
+    /**
+     * Apply a per-track loudness correction, in dB, with mpv's own `volume-gain`.
+     *
+     * A line of its own, separate from [setVolumeLevels]: the crossfade ramp and the sleep fade ride
+     * `volume` and the device mixer, and a track's loudness has to stay put underneath both of them,
+     * the way the sleep fade and the user's volume multiply in the audio path rather than share
+     * a number. It is per handle, so each track of a crossfade keeps its own.
+     */
+    fun setLoudnessGain(db: Float) {
+        if (isReleased) return
+        setPropertyDouble("volume-gain", db.toDouble().coerceIn(-VOLUME_GAIN_LIMIT_DB, VOLUME_GAIN_LIMIT_DB))
     }
 
     /**

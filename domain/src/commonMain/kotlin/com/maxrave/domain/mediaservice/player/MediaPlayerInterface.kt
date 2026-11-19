@@ -175,6 +175,15 @@ interface MediaPlayerInterface {
     var skipSilenceEnabled: Boolean
 
     /**
+     * Loudness correction for the track that is playing, in dB (negative is quieter), from "normalize
+     * volume". Backends that apply it themselves override this; the default ignores it, which is what
+     * Android wants: its handler drives the platform loudness enhancer directly.
+     */
+    var loudnessGainDb: Float
+        get() = 0f
+        set(@Suppress("UNUSED_PARAMETER") value) {}
+
+    /**
      * Apply a ten-band equalizer, in dB per band plus a preamp.
      *
      * Bands are the ISO octave centres 31 Hz to 16 kHz, the spacing AutoEq profiles are published

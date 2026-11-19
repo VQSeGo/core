@@ -1221,6 +1221,8 @@ class MpvPlayerAdapter(
             sleep = (internalSleepFadeFactor * 100).toInt(),
         )
         setRate(internalPlaybackSpeed)
+        // A fresh handle has no correction, and this is the one the handler last set for the track now playing.
+        setLoudnessGain(internalLoudnessGainDb)
         applyPitch()
         // A fresh handle starts with an empty filter chain, so the curve has to be re-applied or
         // the equalizer silently stops working at the next track — including on secondaryPlayer,
@@ -1269,6 +1271,23 @@ class MpvPlayerAdapter(
     }
 
     override var skipSilenceEnabled: Boolean = false
+
+    /**
+     * The loudness correction of the track that is playing, so a handle created later starts with it.
+     *
+     * Written to the newest handle only: during a crossfade that is the track fading in, while the
+     * one fading out keeps its own correction instead of jumping to the next track's.
+     */
+    @Volatile
+    private var internalLoudnessGainDb = 0f
+
+    override var loudnessGainDb: Float
+        get() = internalLoudnessGainDb
+        set(value) {
+            internalLoudnessGainDb = value
+            // Same hop as volume and the equalizer: mpv properties are written on the player thread.
+            coroutineScope.launch { (secondaryPlayer ?: currentPlayer)?.setLoudnessGain(value) }
+        }
 
     /** Current curve, so a handle created later can be brought up to the same setting. */
     @Volatile
