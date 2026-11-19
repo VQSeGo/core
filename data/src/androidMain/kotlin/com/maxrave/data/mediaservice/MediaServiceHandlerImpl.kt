@@ -2372,23 +2372,10 @@ internal class MediaServiceHandlerImpl(
             return
         }
 
-        // Always recreate LoudnessEnhancer because CrossfadeExoPlayerAdapter creates new
-        // ExoPlayer instances per track, each with a different audio session ID.
-        // The old LoudnessEnhancer becomes attached to a released session and has no effect.
-        // Skip while there is no audio session: constructing a LoudnessEnhancer with session
-        // id 0 (AUDIO_SESSION_ID_UNSET) throws.
-        if (player.audioSessionId != PlayerConstants.AUDIO_SESSION_ID_UNSET) {
-            try {
-                loudnessEnhancer?.release()
-            } catch (_: Exception) {
-            }
-            try {
-                loudnessEnhancer = LoudnessEnhancer(player.audioSessionId)
-            } catch (e: Exception) {
-                Logger.e(TAG, "mayBeNormalizeVolume: ${e.message}")
-                Logger.e("MediaServiceHandlerImpl", "mayBeNormalizeVolume failed: ${e.message}", e)
-            }
-        }
+        // Mid-crossfade the adapter's current player, and so its audio session, is still the outgoing
+        // track's: an enhancer built now would put the next track's gain on the old one. The outgoing
+        // enhancer is left as it is, and onCrossfadeStateChanged(false) calls this again for the new one.
+        if (controlState.value.isCrossfading) return
 
         player.currentMediaItem?.mediaId?.let { songId ->
             val videoId =
@@ -2400,6 +2387,22 @@ internal class MediaServiceHandlerImpl(
             volumeNormalizationJob?.cancel()
             volumeNormalizationJob =
                 coroutineScope.launch(Dispatchers.Main) {
+                    // Recreated per track: CrossfadeExoPlayerAdapter builds a new ExoPlayer, with its own
+                    // audio session, for every track. Built here rather than before the launch: this is
+                    // called from onMediaItemTransition, which the adapter sends before it swaps in the
+                    // track's player, so the session read there was the previous track's (or none at all
+                    // for the first track). Session id 0 (AUDIO_SESSION_ID_UNSET) would throw.
+                    if (player.audioSessionId != PlayerConstants.AUDIO_SESSION_ID_UNSET) {
+                        try {
+                            loudnessEnhancer?.release()
+                        } catch (_: Exception) {
+                        }
+                        try {
+                            loudnessEnhancer = LoudnessEnhancer(player.audioSessionId)
+                        } catch (e: Exception) {
+                            Logger.e("MediaServiceHandlerImpl", "mayBeNormalizeVolume failed: ${e.message}", e)
+                        }
+                    }
                     fun Float?.toMb() = ((this ?: 0f) * 100).toInt()
                     streamRepository
                         .getFormatFlow(videoId)
@@ -2970,6 +2973,8 @@ internal class MediaServiceHandlerImpl(
         // for the removal right here would queue it AHEAD of that seek, shift the playlist under it,
         // and the seek would land ~47 tracks later.
         if (!isCrossfading) coroutineScope.launch { trimRadioHistoryIfNeeded() }
+        // The track that faded in now owns the current player: its loudness correction can go on its session.
+        if (!isCrossfading) coroutineScope.launch { mayBeNormalizeVolume() }
     }
 
     override fun onTimelineChanged(
