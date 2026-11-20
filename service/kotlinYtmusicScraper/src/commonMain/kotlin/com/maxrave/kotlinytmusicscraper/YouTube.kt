@@ -2057,8 +2057,16 @@ class YouTube {
                     ) ?: "",
                 ).body<Transcript>()
                 .tryDecodeText()
+        // vssId is ".en" (or "a.en" for an automatic track): asking for a translation into the
+        // track's own language returns the same text, which then showed under every line again.
+        val captionLang =
+            ytWeb.captions?.playerCaptionsTracklistRenderer?.captionTracks?.firstOrNull()?.vssId
+                ?.substringAfter('.')
+                ?.substringBefore('-')
         val translateCaption =
-            try {
+            if (preferLang.isBlank() || captionLang.equals(preferLang.substringBefore('-').trim(), ignoreCase = true)) {
+                null
+            } else try {
                 ytMusic
                     .getYouTubeCaption(
                         "${
