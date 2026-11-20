@@ -160,6 +160,14 @@ internal class DownloadUtils(
             publishDownloadTask(videoId, null)
             return
         }
+        // Already on disk: nothing to fetch, as on Android, where adding a completed download completes at once.
+        // Fetched again, a failed try (no network) marked the row not downloaded while the file stayed.
+        // Whoever needs a fresh copy (redownloadCorrupt, an interrupted download) deletes the file first.
+        if (videoId !in pendingIds && store.existing(videoId) != null) {
+            songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
+            publishDownloadTask(videoId, DownloadState.STATE_DOWNLOADED)
+            return
+        }
         if (!pendingIds.add(videoId)) return
         songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
         publishDownloadTask(videoId, DownloadState.STATE_DOWNLOADING)
