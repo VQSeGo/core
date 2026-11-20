@@ -793,6 +793,13 @@ internal class CrossfadeExoPlayerAdapter(
                         internalPlayWhenReady = false
                     }
 
+                    InternalState.ERROR -> {
+                        // Nothing to pause after a track failed, but the intent still counts, as on
+                        // desktop: when the skipper gives up and pauses, the next track the listener
+                        // moves to must not start on its own, nor a failure there skip on.
+                        internalPlayWhenReady = false
+                    }
+
                     else -> {
                         Logger.w(TAG, "Pause: Called in invalid state: $internalState")
                     }
