@@ -56,4 +56,33 @@ class DownloadedClipTest {
         assertNull(DownloadedClips.carriedOver("a", null))
         assertNull(DownloadedClips.carriedOver(null, "a"))
     }
+
+    private fun playsAsVideo(
+        watchVideo: Boolean = true,
+        isVideo: Boolean = true,
+        downloaded: Boolean = false,
+        streamed: String? = null,
+        handle: Boolean? = null,
+    ) = DownloadedClips.playsAsVideo("a", watchVideo, isVideo, downloaded, streamed, handle)
+
+    @Test
+    fun aClipFromTheNetworkPlaysAsVideoOnlyWithWatchVideo() {
+        assertTrue(playsAsVideo())
+        assertFalse(playsAsVideo(watchVideo = false))
+        assertFalse(playsAsVideo(isVideo = false))
+    }
+
+    @Test
+    fun aDownloadedClipPlaysAsAudioUnlessItsVideoWasAsked() {
+        assertFalse(playsAsVideo(downloaded = true))
+        assertFalse(playsAsVideo(downloaded = true, streamed = "b"))
+        assertTrue(playsAsVideo(downloaded = true, streamed = "a"))
+    }
+
+    @Test
+    fun theHandleOutranksTheDownload() {
+        assertTrue(playsAsVideo(downloaded = true, handle = true))
+        assertFalse(playsAsVideo(downloaded = false, handle = false))
+        assertFalse(playsAsVideo(watchVideo = false, handle = true))
+    }
 }

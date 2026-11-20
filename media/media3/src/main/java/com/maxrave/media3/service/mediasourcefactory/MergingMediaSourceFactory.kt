@@ -12,7 +12,6 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.manager.DataStoreManager
-import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.logger.Logger
 import com.maxrave.media3.extension.isFullyCached
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +25,6 @@ internal class MergingMediaSourceFactory(
     private val liveStreamMediaSourceFactory: MediaSource.Factory,
     private val dataStoreManager: DataStoreManager,
     private val downloadCache: Cache,
-    private val downloadHandler: DownloadHandler,
 ) : MediaSource.Factory {
     override fun setDrmSessionManagerProvider(drmSessionManagerProvider: DrmSessionManagerProvider): MediaSource.Factory {
         defaultMediaSourceFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
@@ -68,12 +66,10 @@ internal class MergingMediaSourceFactory(
         Logger.d("Merging Media Source", getVideo.toString())
         val isClip = mediaItem.mediaMetadata.description == MERGING_DATA_TYPE.VIDEO && getVideo
         if (isClip && mediaItem.mediaId != streamedClipId && isAudioOnlyDownload(mediaItem.mediaId)) {
-            // Downloaded while video playback was off: the audio is on disk, the video is not.
-            // Play the audio whatever the network says (a network without internet still claims
-            // to be online, and one failing half fails the whole merged source), and fetch the
-            // video half so the next play has it.
-            Logger.i("Offline", "audio-only ${mediaItem.mediaId}: video part not downloaded")
-            downloadHandler.downloadVideoPart(mediaItem.mediaId, mediaItem.mediaMetadata.title?.toString().orEmpty())
+            // A downloaded clip is its audio: the video is never downloaded. Play the file whatever the
+            // network says (a network without internet still claims to be online, and one failing half
+            // fails the whole merged source). Its video is only streamed on request (streamedClipId).
+            Logger.i("Offline", "audio-only ${mediaItem.mediaId}: the video is not downloaded")
             return defaultMediaSourceFactory.createMediaSource(mediaItem)
         }
         if (isClip) {
@@ -94,7 +90,9 @@ internal class MergingMediaSourceFactory(
 //        val default = defaultMediaSourceFactory.createMediaSource(mediaItem.buildUpon().setMediaId("AUDIO-${mediaItem.mediaId}").build())
     }
 
-    fun isAudioOnlyDownload(mediaId: String): Boolean =
-        downloadCache.isFullyCached(mediaId, 0L) &&
-            !downloadCache.isFullyCached("${MERGING_DATA_TYPE.VIDEO}$mediaId", 0L)
+    /**
+     * The track's audio is downloaded. Only the audio is: a video half left from before is removed on
+     * start (DownloadUtils.removeVideoParts) and is never read in the meantime.
+     */
+    fun isAudioOnlyDownload(mediaId: String): Boolean = downloadCache.isFullyCached(mediaId, 0L)
 }

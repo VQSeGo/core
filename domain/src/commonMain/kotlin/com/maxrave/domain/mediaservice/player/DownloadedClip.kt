@@ -43,6 +43,26 @@ object DownloadedClips {
         streamedClipId: String?,
     ): Boolean = watchVideoEnabled && itemIsVideo && streamedClipId != null && streamedClipId == mediaId
 
+    /**
+     * Whether a track plays as a video, which keeps it out of a crossfade and out of the music end
+     * measurement: only what really plays with a picture. The queue item only says it is a clip, and
+     * only matters while "watch video" is on. A downloaded clip is an audio file (the video is never
+     * downloaded), so it counts as a song, like any, unless the user asked to stream its video
+     * ([streamedClipId]). [handleHasVideo] is the answer of a player that already holds the track (the
+     * playing one, a precached one), null when there is none or it has not told yet: it outranks the rest.
+     */
+    fun playsAsVideo(
+        mediaId: String,
+        watchVideoEnabled: Boolean,
+        itemIsVideo: Boolean,
+        audioOnlyDownload: Boolean,
+        streamedClipId: String?,
+        handleHasVideo: Boolean? = null,
+    ): Boolean {
+        if (!watchVideoEnabled || !itemIsVideo) return false
+        return handleHasVideo ?: (!audioOnlyDownload || streamedClipId == mediaId)
+    }
+
     /** The request carried over to [currentMediaId]: kept for the same track, dropped once another one plays. */
     fun carriedOver(
         streamedClipId: String?,

@@ -345,12 +345,6 @@ internal class DownloadUtils(
         return true
     }
 
-    // Downloads here are audio only and play without video.
-    override fun downloadVideoPart(
-        videoId: String,
-        title: String,
-    ) = Unit
-
     override fun removeDownload(videoId: String) {
         val wasPending = cancelDownload(videoId)
         val files = File(getDownloadPath()).listFiles().orEmpty().filter { it.name.contains(videoId) }

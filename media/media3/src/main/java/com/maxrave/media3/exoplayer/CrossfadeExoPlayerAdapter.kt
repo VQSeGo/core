@@ -2173,17 +2173,46 @@ internal class CrossfadeExoPlayerAdapter(
     // ========== Internal: Track End ==========
 
     /**
-     * Crossfade is skipped when the NEXT track will play as a video (video content with
-     * the watch-video setting on — the same condition MergingMediaSourceFactory uses to
-     * build a merged audio+video source). The merged source resolves two stream URLs and
-     * is error-prone to prepare mid-fade, and a video should start from its first frame
-     * instead of fading in under the outgoing song — so the transition takes the normal
-     * (non-crossfade) path.
+     * Crossfade is skipped when the NEXT track will play as a video: a clip with the watch-video
+     * setting on whose video really plays (see [playsAsVideo]). The merged source resolves two stream
+     * URLs and is error-prone to prepare mid-fade, and a video should start from its first frame
+     * instead of fading in under the outgoing song, so the transition takes the normal (non-crossfade)
+     * path. A downloaded clip is an audio file and fades like any song.
      */
-    private fun isNextTrackVideo(): Boolean = watchVideoEnabled && playlist.getOrNull(getNextMediaItemIndex())?.isVideo() == true
+    private fun isNextTrackVideo(): Boolean {
+        if (!watchVideoEnabled) return false
+        val next = playlist.getOrNull(getNextMediaItemIndex()) ?: return false
+        return playsAsVideo(next, precachedPlayers[next.mediaId]?.player)
+    }
 
     /** Same skip rule for the CURRENT track: a video should play out to its last frame instead of fading out under the incoming song. */
-    private fun isCurrentTrackVideo(): Boolean = watchVideoEnabled && currentMediaItem?.isVideo() == true
+    private fun isCurrentTrackVideo(): Boolean {
+        if (!watchVideoEnabled) return false
+        val item = currentMediaItem ?: return false
+        return playsAsVideo(item, currentPlayer)
+    }
+
+    /**
+     * What the source decides, not the queue item: the item only says "clip" (see [DownloadedClips.playsAsVideo]).
+     * A player that already prepared the track has the last word: a clip that started from the network
+     * keeps being a video if its download finishes meanwhile.
+     */
+    private fun playsAsVideo(
+        item: GenericMediaItem,
+        player: ExoPlayer?,
+    ): Boolean {
+        val tracks = player?.currentTracks?.groups
+        val handleHasVideo =
+            if (tracks.isNullOrEmpty()) null else tracks.any { it.type == C.TRACK_TYPE_VIDEO }
+        return DownloadedClips.playsAsVideo(
+            mediaId = item.mediaId,
+            watchVideoEnabled = watchVideoEnabled,
+            itemIsVideo = item.isVideo(),
+            audioOnlyDownload = mediaSourceFactory.isAudioOnlyDownload(item.mediaId),
+            streamedClipId = mediaSourceFactory.streamedClipId,
+            handleHasVideo = handleHasVideo,
+        )
+    }
 
     /** A live broadcast never reaches an end to fade out of, and its "remaining time" is only how far behind the live edge it is. */
     private fun isCurrentTrackLive(): Boolean = currentMediaItem?.mediaId?.let(LiveStreamRegistry::isLive) == true

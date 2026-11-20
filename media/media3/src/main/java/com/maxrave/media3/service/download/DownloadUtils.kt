@@ -19,9 +19,6 @@ import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.offline.Downloader
 import androidx.media3.exoplayer.offline.DownloaderFactory
-import coil3.ImageLoader
-import coil3.request.CachePolicy
-import coil3.request.ImageRequest
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.entities.DownloadState
 import com.maxrave.domain.data.entities.SongEntity
@@ -32,7 +29,6 @@ import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.handler.downloadNotificationsEnabled
 import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
-import com.maxrave.domain.utils.MusicVideoType
 import com.maxrave.domain.utils.isLive
 import com.maxrave.logger.Logger
 import com.maxrave.domain.mediaservice.StreamSpliceGuard
@@ -262,8 +258,8 @@ internal class DownloadUtils(
     val downloadingVideoIds = MutableStateFlow<MutableSet<String>>(mutableSetOf())
 
     /**
-     * Use thumbnail to check video or audio. The video stream is fetched only while
-     * "play video instead of audio" is on: playback merges it in for nothing else.
+     * Only the audio is downloaded, whatever "play video instead of audio" says: a downloaded clip is
+     * watched from the network on request (MergingMediaSourceFactory.streamedClipId), never from disk.
      */
     override suspend fun downloadTrack(
         videoId: String,
@@ -277,25 +273,6 @@ internal class DownloadUtils(
             songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
             return
         }
-        var isVideo = false
-        if (dataStoreManager.watchVideoInsteadOfPlayingAudio.first() == DataStoreManager.Values.TRUE) {
-            val videoType = songRepository.getSongById(videoId).lastOrNull()?.videoType
-            if (MusicVideoType.isKnown(videoType)) {
-                // YouTube's own word: a clip in a playlist has a square cover, so the picture is no answer.
-                isVideo = MusicVideoType.isClip(videoType)
-            } else {
-                val request =
-                    ImageRequest
-                        .Builder(context)
-                        .data(thumbnail)
-                        .diskCachePolicy(CachePolicy.ENABLED)
-                        .build()
-                val imageResult = ImageLoader(context).execute(request)
-                if (imageResult.image?.height != imageResult.image?.width && imageResult.image != null) {
-                    isVideo = true
-                }
-            }
-        }
         val downloadRequest =
             DownloadRequest
                 .Builder(videoId, videoId.toUri())
@@ -308,38 +285,19 @@ internal class DownloadUtils(
             downloadRequest,
             false,
         )
-        if (isVideo) {
-            downloadVideoPart(videoId, title)
-        }
     }
 
-    override fun downloadVideoPart(
-        videoId: String,
-        title: String,
-    ) {
-        // Called on every play of a clip whose video half is missing. Re-adding a running download
-        // would cancel and restart its task. A queued or stopped one is sent again on purpose: after
-        // a cold start nothing runs until DownloadService is started, and the add starts it.
-        val state = _downloads.value[videoId]?.second?.state
-        if (state == Download.STATE_DOWNLOADING || state == Download.STATE_COMPLETED) return
-        val id = MERGING_DATA_TYPE.VIDEO + videoId
-        val downloadRequestVideo =
-            DownloadRequest
-                .Builder(id, id.toUri())
-                .setData("Video $title".toByteArray())
-                .setCustomCacheKey(id)
-                .build()
-        try {
-            DownloadService.sendAddDownload(
-                context,
-                MusicDownloadService::class.java,
-                downloadRequestVideo,
-                false,
-            )
-            Logger.i("Offline", "video part queued $videoId")
-        } catch (e: IllegalStateException) {
-            // startService from the background; the next play asks again.
-            Logger.w("Offline", "video part not queued $videoId: ${e.message}")
+    /**
+     * Removes the video halves downloaded by earlier versions (ids "Video<id>"): nothing reads them any
+     * more. Runs at every start but is a no-op once they are gone, so in effect it happens once; on the
+     * application thread and without the service, like the redownload fallback, so it is safe from the
+     * background. The bytes go with the download.
+     */
+    private fun removeVideoParts(ids: List<String>) {
+        if (ids.isEmpty()) return
+        Logger.i("Offline", "removing ${ids.size} video part(s) downloaded by an earlier version")
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            ids.forEach { downloadManager.removeDownload(it) }
         }
     }
 
@@ -498,9 +456,14 @@ internal class DownloadUtils(
 
         // Pair Audio and Video
         val result = mutableMapOf<String, Pair<DownloadHandler.Download?, DownloadHandler.Download?>>()
+        val videoPartIds = mutableListOf<String>()
         val cursor = downloadManager.downloadIndex.getDownloads()
         while (cursor.moveToNext()) {
             val id = cursor.download.request.id
+            // "Video" + an 11 character id: an ordinary id that merely starts with those letters is shorter.
+            if (id.startsWith(MERGING_DATA_TYPE.VIDEO) && id.length == MERGING_DATA_TYPE.VIDEO.length + YOUTUBE_ID_LENGTH) {
+                videoPartIds += id
+            }
             val isVideo = id.contains(MERGING_DATA_TYPE.VIDEO)
             val songId =
                 if (id.contains(MERGING_DATA_TYPE.VIDEO)) {
@@ -518,6 +481,7 @@ internal class DownloadUtils(
                 }
         }
         _downloads.value = result
+        removeVideoParts(videoPartIds)
         downloadManager.addListener(
             object : DownloadManager.Listener {
                 override fun onDownloadChanged(
@@ -592,6 +556,9 @@ internal class DownloadUtils(
         )
     }
 }
+
+/** Length of a YouTube video id. */
+private const val YOUTUBE_ID_LENGTH = 11
 
 /** Thrown by the download resolver after it dropped a download's bytes of another stream variant. */
 private class SpliceRestart(
