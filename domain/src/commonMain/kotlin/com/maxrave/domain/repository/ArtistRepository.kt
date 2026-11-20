@@ -30,7 +30,10 @@ interface ArtistRepository {
         followedStatus: Int,
     ): Boolean?
 
-    /** Makes the followed artists match the account's subscriptions. Writes nothing to the account. */
+    /**
+     * Makes the followed artists match the account's subscriptions. Writes nothing to the account.
+     * When a sync is already running this waits for it to finish instead of returning at once.
+     */
     suspend fun syncFollowedArtists()
 
     fun getFollowedArtists(): Flow<List<ArtistEntity>>

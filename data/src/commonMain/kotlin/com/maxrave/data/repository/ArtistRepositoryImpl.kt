@@ -99,7 +99,13 @@ internal class ArtistRepositoryImpl(
         }
 
     override suspend fun syncFollowedArtists() {
-        if (dataStoreManager.loggedIn.first() != DataStoreManager.TRUE || !followSyncMutex.tryLock()) return
+        if (dataStoreManager.loggedIn.first() != DataStoreManager.TRUE) return
+        if (!followSyncMutex.tryLock()) {
+            // One already runs (the app's start-up one): wait for it rather than return at once,
+            // so a caller that reads the list afterwards reads what that sync wrote.
+            followSyncMutex.withLock { }
+            return
+        }
         try {
             withContext(Dispatchers.IO) {
                 // Read behind a follow still on its way to YouTube, so the list fetched below has it.

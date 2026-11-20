@@ -416,7 +416,13 @@ internal class SongRepositoryImpl(
     }
 
     override suspend fun syncLikedSongs() {
-        if (dataStoreManager.loggedIn.first() != TRUE || !likedSyncMutex.tryLock()) return
+        if (dataStoreManager.loggedIn.first() != TRUE) return
+        if (!likedSyncMutex.tryLock()) {
+            // One already runs (the app's start-up one): wait for it rather than return at once,
+            // so a caller that reads the list afterwards reads what that sync wrote.
+            likedSyncMutex.withLock { }
+            return
+        }
         try {
             withContext(Dispatchers.IO) {
                 // Read behind a like still on its way to YouTube, so the list fetched below has it:

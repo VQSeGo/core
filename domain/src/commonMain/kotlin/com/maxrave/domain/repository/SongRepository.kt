@@ -118,7 +118,10 @@ interface SongRepository {
         likeStatus: Int,
     )
 
-    /** Replaces the local copy of the likes with the account's Liked Music. */
+    /**
+     * Replaces the local copy of the likes with the account's Liked Music. When a sync is already
+     * running this waits for it to finish instead of returning at once.
+     */
     suspend fun syncLikedSongs()
 
     fun updateSongInLibrary(
