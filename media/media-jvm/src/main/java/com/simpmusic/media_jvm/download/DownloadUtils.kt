@@ -100,10 +100,19 @@ internal class DownloadUtils(
     // The queue belongs to this class, not to whoever asked. The screens ask from their own scope, and
     // a transfer running there died with the screen: the row stayed on "downloading" for good, and
     // every track behind it in the caller's loop never started.
-    private val queue = Channel<SongEntity>(Channel.UNLIMITED)
+    private val queue = Channel<QueuedDownload>(Channel.UNLIMITED)
 
-    /** Everything queued or running. An id leaves it once, and whoever takes it out finishes it up. */
-    private val pendingIds = ConcurrentHashMap.newKeySet<String>()
+    /** A song with the token of the request that queued it (see [DownloadRequests]). */
+    private class QueuedDownload(
+        val song: SongEntity,
+        val token: Long,
+    )
+
+    /**
+     * Everything queued or running, with the token of each request. A request leaves it once, and whoever
+     * takes it out finishes it up; a run whose token is no longer the current one does nothing more.
+     */
+    private val pendingIds = DownloadRequests()
     private val transfers = ConcurrentHashMap<String, Job>()
 
     /**
@@ -178,23 +187,30 @@ internal class DownloadUtils(
             publishDownloadTask(videoId, DownloadState.STATE_DOWNLOADED)
             return
         }
-        if (!pendingIds.add(videoId)) return
+        val token = pendingIds.register(videoId) ?: return
         songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
         publishDownloadTask(videoId, DownloadState.STATE_DOWNLOADING)
         onDownloadStarted(videoId, title)
-        queue.trySend(song)
+        queue.trySend(QueuedDownload(song, token))
     }
 
-    private suspend fun runDownload(song: SongEntity) {
+    private suspend fun runDownload(request: QueuedDownload) {
+        val song = request.song
         val videoId = song.videoId
-        // Taken off the queue by removeDownload while it waited.
-        if (videoId !in pendingIds) return
+        val token = request.token
+        // Taken off the queue by removeDownload while it waited, or replaced by a newer request for the track.
+        if (!pendingIds.isCurrent(videoId, token)) return
         var succeeded = false
         val transfer = coroutineScope.launch(start = CoroutineStart.LAZY) { succeeded = transfer(song) }
-        transfers[videoId] = transfer
+        // The track removed and asked for again: the new run waits for the cancelled one to let go of the partial file.
+        transfers.put(videoId, transfer)?.join()
+        // Removed between the check above and the transfer being findable: cancelDownload had nothing to stop.
+        if (!pendingIds.isCurrent(videoId, token)) transfer.cancel()
         transfer.join()
-        transfers.remove(videoId)
-        if (!pendingIds.remove(videoId)) {
+        transfers.remove(videoId, transfer)
+        if (!pendingIds.complete(videoId, token)) {
+            // A newer request for the track owns its files and its state now: not ours to touch.
+            if (videoId in pendingIds) return
             // Removed while it ran.
             deletePartial(videoId)
             audioFile(videoId).delete()
@@ -269,7 +285,7 @@ internal class DownloadUtils(
         File(getDownloadPath()).listFiles { file -> file.isDirectory && file.name.startsWith("temp_chunks_") }?.forEach { it.deleteRecursively() }
         repeat(PARALLEL_DOWNLOADS) {
             coroutineScope.launch {
-                for (song in queue) runDownload(song)
+                for (request in queue) runDownload(request)
             }
         }
         coroutineScope.launch { resumeInterruptedDownloads() }
@@ -344,7 +360,7 @@ internal class DownloadUtils(
 
     /** Takes [videoId] off the queue, or stops its transfer. False if it was neither queued nor running. */
     private fun cancelDownload(videoId: String): Boolean {
-        if (!pendingIds.remove(videoId)) return false
+        if (!pendingIds.cancel(videoId)) return false
         transfers[videoId]?.cancel()
         onDownloadRemoved(videoId)
         return true
@@ -379,7 +395,7 @@ internal class DownloadUtils(
     }
 
     override fun removeAllDownloads() {
-        val pending = pendingIds.filter(::cancelDownload)
+        val pending = pendingIds.ids().filter(::cancelDownload)
         _downloadTask.value = emptyMap()
         val files = File(getDownloadPath()).listFiles().orEmpty().filter { it.name != PARTIAL_DIR }
         files.forEach { it.delete() }
