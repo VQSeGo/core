@@ -93,6 +93,7 @@ import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -339,6 +340,15 @@ internal class MediaServiceHandlerImpl(
             dataStoreManager.skipSilent.distinctUntilChanged().collect { value ->
                 skipSilent = value == TRUE
                 withContext(Dispatchers.Main) { player.skipSilenceEnabled = skipSilent }
+            }
+        }
+        // Switching "normalize volume" while a track plays takes effect in that track, as on desktop, not
+        // at the next one. The first value is skipped: the first track's transition applies it. Mid-crossfade
+        // it waits for the fade to end (onCrossfadeStateChanged applies it then): turning it off sets the
+        // volume, and that would jump the fade-out.
+        backgroundScope.launch {
+            dataStoreManager.normalizeVolume.distinctUntilChanged().drop(1).collect {
+                withContext(Dispatchers.Main) { if (!controlState.value.isCrossfading) mayBeNormalizeVolume() }
             }
         }
         // Collected rather than read once like the settings around it: the equalizer is adjusted
