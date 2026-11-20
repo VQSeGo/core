@@ -148,6 +148,13 @@ fun MediaPlayerViewWithSubtitleJvm(
 
     LaunchedEffect(key1 = timelineState, key2 = lyricsOffsetMs) {
         val lines = lyricsData?.lines ?: return@LaunchedEffect
+        // Unsynced lyrics have every line at 0, which read as "the last line, for the first minute"
+        // and then stayed: there is no line to show over the video.
+        if (lyricsData.syncType != "LINE_SYNCED" && lyricsData.syncType != "RICH_SYNCED") {
+            currentLineIndex = -1
+            currentTranslatedLineIndex = -1
+            return@LaunchedEffect
+        }
         val translatedLines = translatedLyricsData?.lines
         // What the ear is hearing right now, rather than where the player is.
         val nowMs = timelineState.current - lyricsOffsetMs
