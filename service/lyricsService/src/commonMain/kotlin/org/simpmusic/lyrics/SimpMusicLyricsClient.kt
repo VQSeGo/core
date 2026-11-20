@@ -19,6 +19,9 @@ class SimpMusicLyricsApiException(
     message: String,
 ) : Exception(message)
 
+/** Other lyrics asked for a search result past the last one. */
+class NoMoreLyricsVariantsException : Exception("No more lyrics variants")
+
 class SimpMusicLyricsClient {
     private val lyricsService = SimpMusicLyrics()
 
@@ -38,10 +41,16 @@ class SimpMusicLyricsClient {
             lyricsService.findTranslatedLyrics(videoId, language).bodyOrThrow<TranslatedLyricsResponse>()
         }
 
+    /**
+     * LRCLIB's lyrics for the song. [variant] 0 is the automatic pick ([selectLrclibLyricsRecord]);
+     * 1, 2, … are the other records worth showing ([lrclibLyricsAlternatives]), for Other lyrics.
+     * Null when there is none, [NoMoreLyricsVariantsException] when [variant] is past the last one.
+     */
     suspend fun searchLrclibLyrics(
         q_track: String,
         q_artist: String,
         duration: Int?,
+        variant: Int = 0,
     ) = runCatching {
         val rs =
             lyricsService
@@ -49,7 +58,13 @@ class SimpMusicLyricsClient {
                     q_track = q_track,
                     q_artist = q_artist,
                 ).body<List<LrclibObject>>()
-        val lrclibObject = selectLrclibLyricsRecord(rs, duration)
+        val lrclibObject =
+            if (variant <= 0) {
+                selectLrclibLyricsRecord(rs, duration)
+            } else {
+                lrclibLyricsAlternatives(rs, duration, q_track).getOrNull(variant - 1)
+                    ?: throw NoMoreLyricsVariantsException()
+            }
         lrclibObject?.let { parseLrclibLyrics(it) }
     }
 
@@ -99,14 +114,45 @@ internal fun selectLrclibLyricsRecord(
 ): LrclibObject? {
     val candidates =
         if (duration != null) {
-            records.filter { abs(it.duration.toInt() - duration) <= 10 }
+            records.filter { abs(it.duration.toInt() - duration) <= LRCLIB_DURATION_TOLERANCE }
         } else {
             records
         }
-    // Word sync first, then line sync, then any text: the first match is often a plain-only or an
-    // instrumental record, which gave plain or no lyrics while a synced record of the song was next.
-    return candidates.firstOrNull { it.hasWordSync }
-        ?: candidates.firstOrNull { !it.syncedLyrics.isNullOrBlank() }
-        ?: candidates.firstOrNull { !it.plainLyrics.isNullOrBlank() || !it.lyricsfile.isNullOrBlank() }
-        ?: candidates.firstOrNull()
+    return bySyncQuality(candidates).firstOrNull() ?: candidates.firstOrNull()
 }
+
+/**
+ * The records Other lyrics can offer after the automatic pick, best first: the other ones of the
+ * right length, then the ones of a different length named like [title] (a music video runs longer
+ * than the song, so its record is outside the tolerance). Records with no text, and the automatic
+ * pick itself, are left out; a record of another song with a different length never comes in.
+ */
+internal fun lrclibLyricsAlternatives(
+    records: List<LrclibObject>,
+    duration: Int?,
+    title: String?,
+): List<LrclibObject> {
+    val auto = selectLrclibLyricsRecord(records, duration)
+    val withText = records.filter { it.hasText() && it != auto }
+    if (duration == null) return bySyncQuality(withText)
+    val (inside, outside) = withText.partition { abs(it.duration.toInt() - duration) <= LRCLIB_DURATION_TOLERANCE }
+    val named =
+        outside
+            .filter { LyricsQuery.titlesMatch(it.trackName, title) }
+            .sortedBy { abs(it.duration - duration) }
+    return bySyncQuality(inside) + bySyncQuality(named)
+}
+
+private const val LRCLIB_DURATION_TOLERANCE = 10
+
+private fun LrclibObject.hasText(): Boolean = !syncedLyrics.isNullOrBlank() || !plainLyrics.isNullOrBlank() || !lyricsfile.isNullOrBlank()
+
+/**
+ * Word sync first, then line sync, then any text, the order within each kept: the first match is
+ * often a plain-only or an instrumental record, which gave plain or no lyrics while a synced record
+ * of the song was next. Records with no text are left out.
+ */
+private fun bySyncQuality(records: List<LrclibObject>): List<LrclibObject> =
+    records.filter { it.hasWordSync } +
+        records.filter { !it.hasWordSync && !it.syncedLyrics.isNullOrBlank() } +
+        records.filter { !it.hasWordSync && it.syncedLyrics.isNullOrBlank() && it.hasText() }

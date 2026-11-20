@@ -10,6 +10,7 @@ import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.LyricsCanvasRepository
+import com.maxrave.domain.repository.NO_MORE_LYRICS_VARIANTS
 import com.maxrave.domain.utils.Resource
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.logger.Logger
@@ -23,10 +24,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import org.simpmusic.lyrics.LyricsQuery
+import org.simpmusic.lyrics.NoMoreLyricsVariantsException
 import org.simpmusic.lyrics.SimpMusicLyricsApiException
 import org.simpmusic.lyrics.SimpMusicLyricsClient
 import org.simpmusic.lyrics.parser.parseTtmlLyrics
-import kotlin.math.abs
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -83,13 +85,16 @@ internal class LyricsCanvasRepositoryImpl(
 
     override fun getSpotifyLyrics(
         dataStoreManager: DataStoreManager,
-        query: String,
+        title: String,
+        artist: String,
         duration: Int?,
+        variant: Int,
     ): Flow<Resource<Lyrics>> =
         flow {
             runCatching {
+                val songTitle = LyricsQuery.cleanTitle(title, artist)
                 val q =
-                    query
+                    "$songTitle ${LyricsQuery.cleanArtist(artist)}"
                         .replace(
                             Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                             " ",
@@ -161,25 +166,24 @@ internal class LyricsCanvasRepositoryImpl(
                     spotify
                         .searchSpotifyTrack(q, spotifyPersonalToken, spotifyClientToken)
                         .onSuccess { searchResponse ->
-                            val track =
-                                if (duration != 0 && duration != null) {
+                            // The same title and length first, then the same title, then the same
+                            // length, then Spotify's order; nothing is dropped, so a lone result is
+                            // still taken (Other lyrics in the lyrics menu goes on to the next one).
+                            val ranked =
+                                LyricsQuery.rankSearchResults(
+                                    items = searchResponse.data?.searchV2?.tracksV2?.items.orEmpty(),
+                                    title = songTitle,
+                                    durationSec = duration,
+                                    toleranceSec = 2,
+                                    titleOf = { it.item?.data?.name },
                                     // Spotify gives milliseconds, the duration here is in seconds.
-                                    searchResponse.data?.searchV2?.tracksV2?.items?.find {
-                                        val trackMs = it.item?.data?.duration?.totalMilliseconds ?: return@find false
-                                        abs(trackMs / 1000 - duration) <= 2
-                                    }
-                                        ?: searchResponse.data
-                                            ?.searchV2
-                                            ?.tracksV2
-                                            ?.items
-                                            ?.firstOrNull()
-                                } else {
-                                    searchResponse.data
-                                        ?.searchV2
-                                        ?.tracksV2
-                                        ?.items
-                                        ?.firstOrNull()
-                                }
+                                    durationSecOf = { it.item?.data?.duration?.totalMilliseconds?.let { ms -> ms / 1000.0 } },
+                                )
+                            val track = ranked.getOrNull(variant.coerceAtLeast(0))
+                            if (track == null && variant > 0) {
+                                emit(Resource.Error<Lyrics>(NO_MORE_LYRICS_VARIANTS))
+                                return@onSuccess
+                            }
                             Logger.d("Lyrics") { "track: ${Logger.clip(track)}" }
                             if (track != null) {
                                 spotify
@@ -225,11 +229,13 @@ internal class LyricsCanvasRepositoryImpl(
         sartist: String,
         strack: String,
         duration: Int?,
+        variant: Int,
     ): Flow<Resource<Lyrics>> =
         flow {
             Logger.d("Lyrics", "getLrclibLyricsData: $sartist $strack $duration")
             val qartist =
-                sartist
+                LyricsQuery
+                    .cleanArtist(sartist)
                     .replace(
                         Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                         " ",
@@ -240,7 +246,8 @@ internal class LyricsCanvasRepositoryImpl(
                     .replace(Regex("([()])"), "")
                     .replace(".", " ")
             val qtrack =
-                strack
+                LyricsQuery
+                    .cleanTitle(strack, sartist)
                     .replace(
                         Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                         " ",
@@ -251,12 +258,16 @@ internal class LyricsCanvasRepositoryImpl(
                     .replace(Regex("([()])"), "")
                     .replace(".", " ")
             simpMusicLyrics
-                .searchLrclibLyrics(qtrack, qartist, duration)
+                .searchLrclibLyrics(qtrack, qartist, duration, variant)
                 .onSuccess {
                     // A search with no match must still answer: the caller falls back to the
                     // offline cache only on an emitted error, and an empty flow skips it.
                     if (it != null) emit(Resource.Success<Lyrics>(it.toLyrics())) else emit(Resource.Error<Lyrics>("Not found"))
                 }.onFailure {
+                    if (it is NoMoreLyricsVariantsException) {
+                        emit(Resource.Error<Lyrics>(NO_MORE_LYRICS_VARIANTS))
+                        return@onFailure
+                    }
                     Logger.e("LyricsCanvasRepositoryImpl", "getLrclibLyricsData failed: ${it.message}", it)
                     emit(Resource.Error<Lyrics>("Not found"))
                 }
@@ -270,7 +281,8 @@ internal class LyricsCanvasRepositoryImpl(
         flow {
             Logger.d("Lyrics", "getBetterLyrics: $artist $track")
             val qartist =
-                artist
+                LyricsQuery
+                    .cleanArtist(artist)
                     .replace(
                         Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                         " ",
@@ -281,7 +293,8 @@ internal class LyricsCanvasRepositoryImpl(
                     .replace(Regex("([()])"), "")
                     .replace(".", " ")
             val qtrack =
-                track
+                LyricsQuery
+                    .cleanTitle(track, artist)
                     .replace(
                         Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                         " ",
@@ -323,13 +336,21 @@ internal class LyricsCanvasRepositoryImpl(
         }
     }
 
-    override fun getSimpMusicLyrics(videoId: String): Flow<Resource<Lyrics>> =
+    override fun getSimpMusicLyrics(
+        videoId: String,
+        variant: Int,
+    ): Flow<Resource<Lyrics>> =
         flow {
             simpMusicLyrics
                 .getLyrics(videoId)
                 .onSuccess { lyrics ->
                     Logger.d(simpMusicLyricsTag) { "Lyrics found: ${Logger.clip(lyrics)}" }
-                    val result = lyrics.firstOrNull()
+                    // Several people can have added lyrics for one video: Other lyrics goes through them.
+                    val result = lyrics.getOrNull(variant.coerceAtLeast(0))
+                    if (result == null && variant > 0) {
+                        emit(Resource.Error<Lyrics>(NO_MORE_LYRICS_VARIANTS))
+                        return@onSuccess
+                    }
                     if (result == null) {
                         Logger.d(simpMusicLyricsTag, "No lyrics found for videoId: $videoId")
                         emit(Resource.Error<Lyrics>("No lyrics found"))
