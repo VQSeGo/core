@@ -3,32 +3,59 @@ package org.simpmusic.lyrics.parser
 import com.maxrave.domain.extension.decodeHtmlEntities
 import org.simpmusic.lyrics.domain.Lyrics
 
+// One line time: `[mm:ss]`, `[mm:ss.x]`, `[mm:ss.xx]` (hundredths, what LRCLIB and SimpMusic write)
+// or `[mm:ss.xxx]`; some files put a colon before the fraction.
+private val LRC_LINE_TIME = Regex("""\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?]""")
+
+// `[offset:+250]`: every time of the file is that many ms sooner (LRC's own definition).
+private val LRC_OFFSET_TAG = Regex("""\[offset:\s*([+-]?\d+)\s*]""", RegexOption.IGNORE_CASE)
+
+/**
+ * Reads line-synced LRC. The fraction is scaled by its length, so `[00:27.12]` is 27 120 ms (it was
+ * read as 27 012, every line up to 0.9 s early). A line that carries several times
+ * (`[00:12.00][01:30.00]Chorus`) plays at each of them, `[offset:]` moves every time, a time with no
+ * text after it is an instrumental gap (`♫`), and the lines come out in time order.
+ */
 fun parseSyncedLyrics(data: String): Lyrics {
-    val regex = Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2})\\](.+)")
-    val lines = data.lines()
-    val linesLyrics = ArrayList<Lyrics.LyricsX.Line>()
-    lines.map { line ->
-        val matchResult = regex.matchEntire(line)
-        if (matchResult != null) {
-            val minutes = matchResult.groupValues[1].toLong()
-            val seconds = matchResult.groupValues[2].toLong()
-            val milliseconds = matchResult.groupValues[3].toLong()
-            val timeInMillis = minutes * 60_000L + seconds * 1000L + milliseconds
-            // Trim, don't drop a fixed first character. Most providers leave a space after
-            // "]", but LRCLIB packs the text right against it — "[00:27.12]boy, you got me"
-            // — so removeRange(0, 1) ate the first letter of every single line.
-            val rawContent = matchResult.groupValues[4]
-            val content = if (rawContent.isBlank()) "♫" else rawContent.trimStart()
-            linesLyrics.add(
-                Lyrics.LyricsX.Line(
-                    endTimeMs = "0",
-                    startTimeMs = timeInMillis.toString(),
-                    syllables = listOf(),
-                    words = decodeHtmlEntities(content),
-                ),
+    var offsetMs = 0L
+    val timed = ArrayList<Pair<Long, String>>()
+    data.lines().forEach { raw ->
+        val line = raw.trim()
+        LRC_OFFSET_TAG.matchEntire(line)?.let { tag ->
+            offsetMs = tag.groupValues[1].toLongOrNull() ?: 0L
+            return@forEach
+        }
+        val times = ArrayList<Long>()
+        var pos = 0
+        while (true) {
+            val match = LRC_LINE_TIME.find(line, pos)?.takeIf { it.range.first == pos } ?: break
+            val (minutes, seconds, fraction) = match.destructured
+            val fractionMs =
+                when (fraction.length) {
+                    0 -> 0L
+                    1 -> fraction.toLong() * 100
+                    2 -> fraction.toLong() * 10
+                    else -> fraction.toLong()
+                }
+            times += minutes.toLong() * 60_000L + seconds.toLong() * 1000L + fractionMs
+            pos = match.range.last + 1
+        }
+        if (times.isEmpty()) return@forEach
+        // Trim, don't drop a fixed first character. Most providers leave a space after
+        // "]", but LRCLIB packs the text right against it — "[00:27.12]boy, you got me".
+        val rawContent = line.substring(pos)
+        val content = if (rawContent.isBlank()) "♫" else decodeHtmlEntities(rawContent.trimStart())
+        times.forEach { timed += it to content }
+    }
+    val linesLyrics =
+        timed.sortedBy { it.first }.map { (timeMs, words) ->
+            Lyrics.LyricsX.Line(
+                endTimeMs = "0",
+                startTimeMs = (timeMs - offsetMs).coerceAtLeast(0L).toString(),
+                syllables = listOf(),
+                words = words,
             )
         }
-    }
     return Lyrics(
         lyrics =
             Lyrics.LyricsX(
