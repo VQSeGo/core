@@ -2620,6 +2620,9 @@ class MpvPlayerAdapter(
 
         crossfadeFromIndex = -1
         setCrossfading(false)
+        // finalizeCrossfade precaches the track after A+1; an interrupted fade has to as well, or a
+        // pause or seek mid-fade left the next crossfade without a precached player (as on Android).
+        triggerPrecachingInternal()
         Logger.d(TAG, "commitIncomingAsCurrent: committed track index $localCurrentMediaItemIndex")
     }
 
