@@ -163,19 +163,10 @@ internal class LyricsCanvasRepositoryImpl(
                         .onSuccess { searchResponse ->
                             val track =
                                 if (duration != 0 && duration != null) {
+                                    // Spotify gives milliseconds, the duration here is in seconds.
                                     searchResponse.data?.searchV2?.tracksV2?.items?.find {
-                                        abs(
-                                            (
-                                                (
-                                                    (
-                                                        it.item
-                                                            ?.data
-                                                            ?.duration
-                                                            ?.totalMilliseconds ?: (0 / 1000)
-                                                    ) - duration
-                                                )
-                                            ),
-                                        ) < 1
+                                        val trackMs = it.item?.data?.duration?.totalMilliseconds ?: return@find false
+                                        abs(trackMs / 1000 - duration) <= 2
                                     }
                                         ?: searchResponse.data
                                             ?.searchV2
