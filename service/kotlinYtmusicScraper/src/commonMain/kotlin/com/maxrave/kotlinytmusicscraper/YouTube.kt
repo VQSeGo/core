@@ -673,7 +673,10 @@ class YouTube {
                             params = null,
                             continuation = continuation,
                         ).body<BrowseResponse>()
-                songs.addAll(page.playlistContinuationContents().orEmpty().mapNotNull { it.toSongItem() })
+                // A page that reads as nothing would end the list early and unlike everything past it.
+                val rows = page.playlistContinuationContents()
+                check(!rows.isNullOrEmpty()) { "Unreadable Liked Music page" }
+                songs.addAll(rows.mapNotNull { it.toSongItem() })
                 continuation = page.getPlaylistContinuation()
             }
             songs
