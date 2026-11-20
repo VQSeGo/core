@@ -128,6 +128,16 @@ internal class DownloadUtils(
         }
         Logger.i(TAG, "Resuming ${interrupted.size} interrupted downloads")
         interrupted.forEach { enqueue(it.videoId, it.title) }
+        // A row marked downloaded with no file: a restored backup (it carries the database, not the downloads)
+        // or a file deleted by hand. Android does the same check against its download cache (checkIsRestoring).
+        val missing =
+            songRepository
+                .getDownloadedSongs()
+                .lastOrNull()
+                .orEmpty()
+                .filter { it.videoId !in pendingIds && store.existing(it.videoId) == null }
+        missing.forEach { songRepository.updateDownloadState(it.videoId, DownloadState.STATE_NOT_DOWNLOADED) }
+        if (missing.isNotEmpty()) Logger.i(TAG, "${missing.size} songs marked downloaded had no file, now not downloaded")
     }
 
     private val store = PartialFileStore(File(getDownloadPath()))
