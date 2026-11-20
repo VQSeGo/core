@@ -683,6 +683,12 @@ internal class SongRepositoryImpl(
                         .addToDisliked(mediaId)
                         .onSuccess {
                             Logger.d(TAG, "Disliked -> Success: $it")
+                            if (it == 200) {
+                                // A dislike replaces a like on YouTube; the local copy follows, or the
+                                // heart stayed filled and the song stayed in Liked Music until a sync.
+                                likeWrites++
+                                localDataSource.updateLiked(0, mediaId)
+                            }
                             emit(it)
                         }.onFailure {
                             Logger.e("SongRepositoryImpl", "addToYouTubeDisliked failed: ${it.message}", it)
