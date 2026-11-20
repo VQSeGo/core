@@ -428,7 +428,12 @@ interface DatabaseDao {
     @Query("SELECT thumbnails FROM artist WHERE followed = 1 AND thumbnails IS NOT NULL ORDER BY followedAt DESC LIMIT :limit")
     fun getFollowedArtistThumbnails(limit: Int): Flow<List<String?>>
 
-    @Query("UPDATE song SET downloadState = :downloadState, downloadedAt = :downloadedAt WHERE videoId = :videoId")
+    // A song already downloaded keeps its date: Android's download queue writes "downloaded" again for every
+    // downloaded song at each start and each download event, which set every date to the same moment.
+    @Query(
+        "UPDATE song SET downloadedAt = CASE WHEN downloadState = 3 AND :downloadState = 3 THEN COALESCE(downloadedAt, :downloadedAt) " +
+            "ELSE :downloadedAt END, downloadState = :downloadState WHERE videoId = :videoId",
+    )
     suspend fun updateDownloadState(
         downloadState: Int,
         videoId: String,
