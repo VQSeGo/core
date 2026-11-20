@@ -1359,20 +1359,50 @@ class JvmMediaPlayerHandlerImpl(
         }
     }
 
+    // The heart state the taps still on their way to YouTube add up to, and how many are on the way.
+    // `controlState.isLiked` follows the database, so it is still the old value right after a tap:
+    // a second quick tap read it and sent the same like again instead of taking it back.
+    private val likeTapLock = Any()
+    private var pendingLikeTarget = false
+    private var pendingLikeTaps = 0
+
     override fun toggleLike() {
         Logger.d(TAG, "toggleLike: ${nowPlayingState.value.mediaItem.mediaId}")
-        toggleLikeJob?.cancel()
+        // Decided here, on the tap, not in the coroutine: the second tap must see the first one.
+        val target =
+            synchronized(likeTapLock) {
+                val base = if (pendingLikeTaps > 0) pendingLikeTarget else _controlState.value.isLiked
+                pendingLikeTarget = !base
+                pendingLikeTaps++
+                pendingLikeTarget
+            }
+        // The heart answers at once. If YouTube refuses, the database is put back and read below.
+        _controlState.update { it.copy(isLiked = target) }
+        // Not cancelled by the next tap: each one is its own like or unlike, and the repository
+        // writes them one at a time in the order they were made.
         toggleLikeJob =
             coroutineScope.launch {
                 var id = (player.currentMediaItem?.mediaId ?: "")
                 if (id.contains("Video")) {
                     id = id.removePrefix("Video")
                 }
-                songRepository.updateLikeStatus(
-                    id,
-                    if (!(controlState.first().isLiked)) 1 else 0,
-                )
-                delay(200)
+                try {
+                    songRepository.updateLikeStatus(id, if (target) 1 else 0)
+                } finally {
+                    val last = synchronized(likeTapLock) { --pendingLikeTaps == 0 }
+                    if (last) {
+                        // The database holds what YouTube accepted: the tap when it went through,
+                        // the old value when it did not (or when nobody is signed in).
+                        val liked =
+                            withContext(NonCancellable) {
+                                songRepository.getSongById(id).singleOrNull()?.liked
+                            }
+                        val current = (player.currentMediaItem?.mediaId ?: "").removePrefix("Video")
+                        if (liked != null && current == id) {
+                            _controlState.update { it.copy(isLiked = liked) }
+                        }
+                    }
+                }
             }
     }
 
@@ -2716,6 +2746,8 @@ class JvmMediaPlayerHandlerImpl(
             volumeNormalizationJob = null
             toggleLikeJob?.cancel()
             toggleLikeJob = null
+            // A tap cancelled before it started never reaches its own count-down.
+            synchronized(likeTapLock) { pendingLikeTaps = 0 }
             updateNotificationJob?.cancel()
             updateNotificationJob = null
             loadJob?.cancel()
