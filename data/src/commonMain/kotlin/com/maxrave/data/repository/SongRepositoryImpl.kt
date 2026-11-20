@@ -419,20 +419,27 @@ internal class SongRepositoryImpl(
         if (dataStoreManager.loggedIn.first() != TRUE || !likedSyncMutex.tryLock()) return
         try {
             withContext(Dispatchers.IO) {
-                val writes = likeWrites
+                // Read behind a like still on its way to YouTube, so the list fetched below has it:
+                // read before, the like was in neither the check nor the list and got cleared.
+                val writes = likeMutex.withLock { likeWrites }
                 youTube
                     .getLikedMusic()
                     .onSuccess { tracks ->
                         // Empty is more likely a page the parser could not read than an account
-                        // with no likes, and a like made while this ran is not in the list.
-                        if (tracks.isEmpty() || writes != likeWrites) return@onSuccess
-                        localDataSource.replaceLikedSongs(
-                            tracks.map { song ->
-                                // Kept out of the library's recently added: nothing was added here.
-                                song.toTrack().toSongEntity().copy(inLibrary = Config.REMOVED_SONG_DATE_TIME)
-                            },
-                        )
-                        Logger.d(TAG, "syncLikedSongs: ${tracks.size} liked songs")
+                        // with no likes.
+                        if (tracks.isEmpty()) return@onSuccess
+                        // Under the lock, so a tap cannot land between the check and the write.
+                        likeMutex.withLock {
+                            // A like made while this ran is not in the list.
+                            if (writes != likeWrites) return@withLock
+                            localDataSource.replaceLikedSongs(
+                                tracks.map { song ->
+                                    // Kept out of the library's recently added: nothing was added here.
+                                    song.toTrack().toSongEntity().copy(inLibrary = Config.REMOVED_SONG_DATE_TIME)
+                                },
+                            )
+                            Logger.d(TAG, "syncLikedSongs: ${tracks.size} liked songs")
+                        }
                     }.onFailure {
                         Logger.w(TAG, "syncLikedSongs: ${it.message}")
                     }
