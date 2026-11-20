@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
 import java.util.concurrent.Executor
@@ -271,6 +272,18 @@ internal class DownloadUtils(
         if (songRepository.getSongById(videoId).lastOrNull()?.isLive == true) {
             Logger.i("Download", "$videoId is a live stream, not downloading")
             songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
+            return
+        }
+        // Already downloaded: an add would queue the completed download again, and without network it waits
+        // there, the song row on "preparing" and out of the Downloaded list, until the network is back.
+        // Downloading a playlist or an album queues its downloaded tracks too. As on desktop (enqueue).
+        val completed =
+            withContext(Dispatchers.IO) {
+                downloadManager.downloadIndex.getDownload(videoId)?.state == Download.STATE_COMPLETED &&
+                    downloadCache.isFullyCached(videoId, 0L)
+            }
+        if (completed) {
+            songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
             return
         }
         val downloadRequest =
