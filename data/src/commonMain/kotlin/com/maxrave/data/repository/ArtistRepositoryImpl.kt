@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
 import kotlin.concurrent.Volatile
@@ -59,6 +60,9 @@ internal class ArtistRepositoryImpl(
     private var followWrites = 0
     private val followSyncMutex = Mutex()
 
+    // One follow at a time, and the sync reads and writes only between them: see syncFollowedArtists.
+    private val followMutex = Mutex()
+
     /**
      * Unfollowing also drops what only existed to serve the follow.
      *
@@ -82,45 +86,56 @@ internal class ArtistRepositoryImpl(
         followedStatus: Int,
     ): Boolean? =
         withContext(Dispatchers.Main) {
-            followWrites++
-            setFollowedLocally(channelId, followedStatus == 1)
-            if (dataStoreManager.loggedIn.first() != DataStoreManager.TRUE) {
-                return@withContext null
+            followMutex.withLock {
+                followWrites++
+                setFollowedLocally(channelId, followedStatus == 1)
+                if (dataStoreManager.loggedIn.first() != DataStoreManager.TRUE) {
+                    return@withLock null
+                }
+                val updated = withContext(Dispatchers.IO) { setSubscription(channelId, followedStatus == 1) }
+                if (!updated) setFollowedLocally(channelId, followedStatus != 1)
+                updated
             }
-            val updated = withContext(Dispatchers.IO) { setSubscription(channelId, followedStatus == 1) }
-            if (!updated) setFollowedLocally(channelId, followedStatus != 1)
-            updated
         }
 
     override suspend fun syncFollowedArtists() {
         if (dataStoreManager.loggedIn.first() != DataStoreManager.TRUE || !followSyncMutex.tryLock()) return
         try {
             withContext(Dispatchers.IO) {
-                val writes = followWrites
+                // Read behind a follow still on its way to YouTube, so the list fetched below has it.
+                val writes = followMutex.withLock { followWrites }
                 youTube
                     .getLibrarySubscriptions()
                     .onSuccess { subscriptions ->
                         // Empty is more likely a page the parser could not read than an account
-                        // with no subscriptions, and a follow made while this ran is not in the list.
-                        if (subscriptions.isEmpty() || writes != followWrites) {
-                            Logger.w("ArtistRepositoryImpl", "syncFollowedArtists: skipped, ${subscriptions.size} subscriptions read")
+                        // with no subscriptions.
+                        if (subscriptions.isEmpty()) {
+                            Logger.w("ArtistRepositoryImpl", "syncFollowedArtists: skipped, no subscriptions read")
                             return@onSuccess
                         }
-                        val followed = getFullDataFromDB { limit, offset -> localDataSource.getFollowedArtists(limit, offset) }
-                        val followedIds = followed.map { it.channelId }.toSet()
-                        val subscribedIds = subscriptions.map { it.channelId }.toSet()
-                        followed.filter { it.channelId !in subscribedIds }.forEach { setFollowedLocally(it.channelId, false) }
-                        subscriptions.filter { it.channelId !in followedIds }.forEach { artist ->
-                            // Ignored when the row exists. Dated out of the library's recently added.
-                            localDataSource.insertArtist(
-                                ArtistEntity(
-                                    channelId = artist.channelId,
-                                    name = artist.name,
-                                    thumbnails = artist.thumbnail,
-                                    inLibrary = Config.REMOVED_SONG_DATE_TIME,
-                                ),
-                            )
-                            setFollowedLocally(artist.channelId, true)
+                        // Under the lock, so a tap cannot land between the check and the writes.
+                        followMutex.withLock {
+                            // A follow made while this ran is not in the list.
+                            if (writes != followWrites) {
+                                Logger.w("ArtistRepositoryImpl", "syncFollowedArtists: skipped, a follow changed meanwhile")
+                                return@withLock
+                            }
+                            val followed = getFullDataFromDB { limit, offset -> localDataSource.getFollowedArtists(limit, offset) }
+                            val followedIds = followed.map { it.channelId }.toSet()
+                            val subscribedIds = subscriptions.map { it.channelId }.toSet()
+                            followed.filter { it.channelId !in subscribedIds }.forEach { setFollowedLocally(it.channelId, false) }
+                            subscriptions.filter { it.channelId !in followedIds }.forEach { artist ->
+                                // Ignored when the row exists. Dated out of the library's recently added.
+                                localDataSource.insertArtist(
+                                    ArtistEntity(
+                                        channelId = artist.channelId,
+                                        name = artist.name,
+                                        thumbnails = artist.thumbnail,
+                                        inLibrary = Config.REMOVED_SONG_DATE_TIME,
+                                    ),
+                                )
+                                setFollowedLocally(artist.channelId, true)
+                            }
                         }
                     }.onFailure {
                         Logger.w("ArtistRepositoryImpl", "syncFollowedArtists: ${it.message}")
