@@ -2682,13 +2682,22 @@ class JvmMediaPlayerHandlerImpl(
                 ),
             )
             // playWhenReady is the whole difference: the track starts loading (and so reaches
-            // BUFFERING) right here, before the queue behind it, and the seek below then lands
-            // it on the saved index and position.
-            addMediaItem(currentPlayingTrack.toGenericMediaItem(), playWhenReady = playWhenReady)
+            // BUFFERING) right here, before the queue behind it.
+            //
+            // The saved position rides on this one load (B16). It used to be applied after the
+            // queue with seekTo(index, savedPosition), and on mpv that call always opens a new
+            // handle: the track loaded twice, and a Play pressed while the queue was loading
+            // started it from 0:00 and then jumped back to the saved spot. Nothing has to seek
+            // afterwards: load() puts this item at [index] with moveMediaItem, which keeps the
+            // current handle and its position, the same as the Android handler relies on.
+            // This is addMediaItem(item, playWhenReady) with a start position and without its
+            // prepare(), which would start a second load from 0:00 if the playlist were not empty.
+            player.clearMediaItems()
+            player.setMediaItem(currentPlayingTrack.toGenericMediaItem(), startPositionMs = savedPosition)
+            player.playWhenReady = playWhenReady
             loadPlaylistOrAlbum(index = index)
             loadJob?.join()
             resetCrossfade()
-            player.seekTo(index, savedPosition)
             // Announce the restored position once. Nothing plays after a restore
             // (playWhenReady = false above), and startProgressUpdate only runs while
             // isPlaying — so no state is ever published and the UI sits at 0:00 on a

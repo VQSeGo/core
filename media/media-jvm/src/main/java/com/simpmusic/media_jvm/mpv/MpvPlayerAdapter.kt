@@ -722,7 +722,19 @@ class MpvPlayerAdapter(
 
     // ========== Media Item Management ==========
 
-    override fun setMediaItem(mediaItem: GenericMediaItem) {
+    override fun setMediaItem(mediaItem: GenericMediaItem) = setMediaItem(mediaItem, 0L)
+
+    /**
+     * The start position rides on the one load this makes, as `seekTo(index, positionMs)` does: a
+     * seek afterwards would have to reload the handle here, which is what the queue restore did
+     * (a second load, and a Play pressed in between heard 0:00 and then a jump).
+     */
+    override fun setMediaItem(
+        mediaItem: GenericMediaItem,
+        startPositionMs: Long,
+    ) {
+        // A live broadcast is followed at its live edge, as in seekTo(Long).
+        val startMs = if (LiveStreamRegistry.isLive(mediaItem.mediaId)) 0L else startPositionMs.coerceAtLeast(0L)
         coroutineScope.launch {
             currentLoadJob?.cancel()
             cancelPrecaching()
@@ -737,7 +749,7 @@ class MpvPlayerAdapter(
             }
 
             notifyTimelineChanged("TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED")
-            loadAndPlayTrackInternal(0, 0, internalPlayWhenReady)
+            loadAndPlayTrackInternal(0, startMs, internalPlayWhenReady)
         }
     }
 

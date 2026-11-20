@@ -53,6 +53,19 @@ interface MediaPlayerInterface {
     // Media item management
     fun setMediaItem(mediaItem: GenericMediaItem)
 
+    /**
+     * [setMediaItem] that starts at [startPositionMs]. The default seeks after the load, which is
+     * what ExoPlayer does anyway; the desktop adapter overrides it to hand the position to the load
+     * itself, because a seek there before the track is open reloads the handle.
+     */
+    fun setMediaItem(
+        mediaItem: GenericMediaItem,
+        startPositionMs: Long,
+    ) {
+        setMediaItem(mediaItem)
+        if (startPositionMs > 0L) seekTo(startPositionMs)
+    }
+
     fun addMediaItem(mediaItem: GenericMediaItem)
 
     fun addMediaItem(
