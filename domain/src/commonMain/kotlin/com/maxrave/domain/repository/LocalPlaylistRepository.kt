@@ -9,6 +9,7 @@ import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.browse.playlist.PlaylistState
 import com.maxrave.domain.utils.FilterState
 import com.maxrave.domain.utils.LocalResource
+import com.maxrave.domain.utils.YouTubePlaylistAdd
 import kotlinx.coroutines.flow.Flow
 import kotlinx.datetime.LocalDateTime
 
@@ -183,12 +184,17 @@ interface LocalPlaylistRepository {
 
     fun updateListTrackSynced(id: Long): Flow<Boolean>
 
+    /**
+     * [alreadyInYtMessage] is emitted instead of [updatedYtMessage] when the playlist is synced
+     * with YouTube and the track was in the YouTube playlist already.
+     */
     fun addTrackToLocalPlaylist(
         id: Long,
         song: SongEntity,
         successMessage: String,
         updatedYtMessage: String,
         errorMessage: String,
+        alreadyInYtMessage: String,
     ): Flow<LocalResource<String>>
 
     fun removeTrackFromLocalPlaylist(
@@ -208,5 +214,5 @@ interface LocalPlaylistRepository {
     fun addYouTubePlaylistItem(
         youtubePlaylistId: String,
         videoId: String,
-    ): Flow<LocalResource<String>>
+    ): Flow<LocalResource<YouTubePlaylistAdd>>
 }

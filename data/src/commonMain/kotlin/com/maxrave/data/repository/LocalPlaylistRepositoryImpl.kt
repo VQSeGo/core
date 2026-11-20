@@ -27,6 +27,7 @@ import com.maxrave.domain.extension.now
 import com.maxrave.domain.repository.LocalPlaylistRepository
 import com.maxrave.domain.utils.FilterState
 import com.maxrave.domain.utils.LocalResource
+import com.maxrave.domain.utils.YouTubePlaylistAdd
 import com.maxrave.domain.utils.toListVideoId
 import com.maxrave.domain.utils.toSongEntity
 import com.maxrave.domain.utils.wrapDataResource
@@ -610,6 +611,7 @@ internal class LocalPlaylistRepositoryImpl(
         successMessage: String,
         updatedYtMessage: String,
         errorMessage: String,
+        alreadyInYtMessage: String,
     ): Flow<LocalResource<String>> =
         flow {
             emit(LocalResource.Loading())
@@ -641,23 +643,22 @@ internal class LocalPlaylistRepositoryImpl(
             val ytId = localPlaylist.youtubePlaylistId
             if (ytId != null) {
                 youTube
-                    .addPlaylistItem(ytId, song.videoId)
-                    .onSuccess {
-                        val data = it.playlistEditResults
-                        if (data.isNotEmpty()) {
-                            for (d in data) {
-                                localDataSource.insertSetVideoId(
-                                    SetVideoIdEntity(
-                                        videoId = d.playlistEditVideoAddedResultData.videoId,
-                                        setVideoId = d.playlistEditVideoAddedResultData.setVideoId,
-                                        youtubePlaylistId = ytId,
-                                    ),
-                                )
-                            }
-                            emit(LocalResource.Success(updatedYtMessage))
-                        } else {
-                            emit(LocalResource.Error<String>("$errorMessage: Empty playlistEditResults"))
+                    .addPlaylistItemChecked(ytId, song.videoId)
+                    .onSuccess { outcome ->
+                        outcome.entries.forEach { entry ->
+                            localDataSource.insertSetVideoId(
+                                SetVideoIdEntity(
+                                    videoId = entry.videoId,
+                                    setVideoId = entry.setVideoId,
+                                    youtubePlaylistId = ytId,
+                                ),
+                            )
                         }
+                        emit(
+                            LocalResource.Success(
+                                if (outcome.result == YouTubePlaylistAdd.ALREADY_IN_PLAYLIST) alreadyInYtMessage else updatedYtMessage,
+                            ),
+                        )
                     }.onFailure {
                         emit(LocalResource.Error<String>("$errorMessage: ${it.message}"))
                     }
@@ -888,27 +889,24 @@ internal class LocalPlaylistRepositoryImpl(
     override fun addYouTubePlaylistItem(
         youtubePlaylistId: String,
         videoId: String,
-    ): Flow<LocalResource<String>> =
+    ): Flow<LocalResource<YouTubePlaylistAdd>> =
         flow {
             emit(LocalResource.Loading())
             youTube
-                .addPlaylistItem(youtubePlaylistId.verifyYouTubePlaylistId(), videoId)
-                .onSuccess {
-                    if (it.playlistEditResults.isNotEmpty()) {
-                        for (playlistEditResult in it.playlistEditResults) {
-                            localDataSource.insertSetVideoId(
-                                SetVideoIdEntity(
-                                    videoId = playlistEditResult.playlistEditVideoAddedResultData.videoId,
-                                    setVideoId = playlistEditResult.playlistEditVideoAddedResultData.setVideoId,
-                                    youtubePlaylistId = youtubePlaylistId.removePrefix("VL"),
-                                ),
-                            )
-                        }
-                        emit(LocalResource.Success(it.status))
-                    } else {
-                        emit(LocalResource.Error("FAILED"))
+                .addPlaylistItemChecked(youtubePlaylistId.verifyYouTubePlaylistId(), videoId)
+                .onSuccess { outcome ->
+                    outcome.entries.forEach { entry ->
+                        localDataSource.insertSetVideoId(
+                            SetVideoIdEntity(
+                                videoId = entry.videoId,
+                                setVideoId = entry.setVideoId,
+                                youtubePlaylistId = youtubePlaylistId.removePrefix("VL"),
+                            ),
+                        )
                     }
+                    emit(LocalResource.Success(outcome.result))
                 }.onFailure {
+                    Logger.e("LocalPlaylistRepositoryImpl", "addYouTubePlaylistItem failed: ${it.message}", it)
                     emit(LocalResource.Error("FAILED"))
                 }
         }.flowOn(Dispatchers.IO)
