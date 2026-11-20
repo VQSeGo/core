@@ -54,6 +54,9 @@ import kotlinx.datetime.LocalDateTime
 
 private const val TAG = "LocalPlaylistRepositoryImpl"
 
+/** The position of a track added after the one at [lastPosition] (null for an empty playlist). */
+internal fun nextPlaylistPosition(lastPosition: Int?): Int = (lastPosition ?: -1) + 1
+
 internal class LocalPlaylistRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
@@ -615,7 +618,8 @@ internal class LocalPlaylistRepositoryImpl(
                 localDataSource.insertSong(song)
             }
             val localPlaylist = localDataSource.getLocalPlaylist(id) ?: return@flow
-            val nextPosition = localPlaylist.tracks?.size ?: 0
+            // After a removal the positions have a gap, so the count of tracks may be taken already.
+            val nextPosition = nextPlaylistPosition(localDataSource.getNewestPlaylistPairSong(id)?.position)
             val nextPair =
                 PairSongLocalPlaylist(
                     playlistId = id,
