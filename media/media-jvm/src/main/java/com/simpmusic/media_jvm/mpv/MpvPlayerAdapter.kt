@@ -2492,7 +2492,7 @@ class MpvPlayerAdapter(
                             if (dur > 0 && pos >= 0) {
                                 val fadeEnd = fadeEndMs(player, dur)
                                 if (fadeEnd < dur) fadeEndLog = ", timed to the music end at ${fadeEnd}ms of ${dur}ms (position ${pos}ms)"
-                                MusicEnd.remainingMs(pos, fadeEnd)
+                                MusicEnd.remainingMs(pos, fadeEnd, internalPlaybackSpeed)
                             } else {
                                 resolvedConfigDurationMs.toLong()
                             }
@@ -2821,7 +2821,7 @@ class MpvPlayerAdapter(
                                     if (dur > 0 && pos > 0) {
                                         // Up to the music end when skip silence is on and it is known,
                                         // so the old track fades out over its last music, not its silence.
-                                        val timeRemaining = MusicEnd.remainingMs(pos, fadeEndMs(player, dur))
+                                        val timeRemaining = MusicEnd.remainingMs(pos, fadeEndMs(player, dur), internalPlaybackSpeed)
                                         val nextVideoId = playlist.getOrNull(getNextMediaItemIndex())?.mediaId
                                         val isPrecached = nextVideoId != null && precachedPlayers.containsKey(nextVideoId)
                                         val preparationBufferMs = if (isPrecached) 0L else 3000L
