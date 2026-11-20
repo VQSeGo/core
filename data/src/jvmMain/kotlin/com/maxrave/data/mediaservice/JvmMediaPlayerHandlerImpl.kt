@@ -703,6 +703,12 @@ class JvmMediaPlayerHandlerImpl(
         }
         _format.value = null
         playbackTrackingGate.reset()
+        // The previous track's watch-time pings must not run on into this one: they read the player's
+        // progress, so they went on reporting the old video with the new track's position (a track
+        // without fresh links waits 20 s before its own tracking starts, one without links never does).
+        initPlaybackJob?.cancel()
+        jobWatchtime?.cancel()
+        watchTimeList = arrayListOf()
         trackPlayedRecorded = false
         // Cancelled here, not further down: the writes below touch the song table, which makes the
         // previous track's subscription emit its own row over the track that just started. The

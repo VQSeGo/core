@@ -621,6 +621,12 @@ internal class MediaServiceHandlerImpl(
         }
         _format.value = null
         playbackTrackingGate.reset()
+        // The previous track's watch-time pings must not run on into this one: they read the player's
+        // progress, so they went on reporting the old video with the new track's position (a track
+        // without fresh links waits 20 s before its own tracking starts, one without links never does).
+        initPlaybackJob?.cancel()
+        jobWatchtime?.cancel()
+        watchTimeList = arrayListOf()
         trackPlayedRecorded = false
         // Both subscriptions are swapped here, before the job below writes the song table: the
         // previous track's subscription used to stay alive until the end of that job, so every one
