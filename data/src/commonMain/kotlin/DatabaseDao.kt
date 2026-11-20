@@ -126,7 +126,7 @@ interface DatabaseDao {
             val fetched =
                 getDownloadedPlaylists(
                     limit = 100,
-                    offset = shouldContinue.second,
+                    offset = shouldContinuePlaylist.second,
                 )
             a.addAll(
                 fetched,
@@ -193,7 +193,7 @@ interface DatabaseDao {
             val fetched =
                 getDownloadingPlaylists(
                     limit = 100,
-                    offset = shouldContinue.second,
+                    offset = shouldContinuePlaylist.second,
                 )
             a.addAll(
                 fetched,
