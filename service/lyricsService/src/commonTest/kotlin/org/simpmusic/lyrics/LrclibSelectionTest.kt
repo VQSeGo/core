@@ -43,6 +43,15 @@ class LrclibSelectionTest {
     }
 
     @Test
+    fun syncedRecordBeatsAnEarlierPlainOrEmptyOne() {
+        val plainOnly = record(1, 137f).copy(syncedLyrics = null)
+        val instrumental = record(2, 137f).copy(syncedLyrics = null, plainLyrics = null, instrumental = true)
+        val synced = record(3, 138f)
+        assertEquals(synced, selectLrclibLyricsRecord(listOf(instrumental, plainOnly, synced), 137))
+        assertEquals(plainOnly, selectLrclibLyricsRecord(listOf(instrumental, plainOnly), 137))
+    }
+
+    @Test
     fun unknownDurationStillPrefersWordSync() {
         val rich = record(2, 200f, hasWordSync = true)
         assertEquals(rich, selectLrclibLyricsRecord(listOf(record(1, 137f), rich), null))

@@ -103,5 +103,10 @@ internal fun selectLrclibLyricsRecord(
         } else {
             records
         }
-    return candidates.firstOrNull { it.hasWordSync } ?: candidates.firstOrNull()
+    // Word sync first, then line sync, then any text: the first match is often a plain-only or an
+    // instrumental record, which gave plain or no lyrics while a synced record of the song was next.
+    return candidates.firstOrNull { it.hasWordSync }
+        ?: candidates.firstOrNull { !it.syncedLyrics.isNullOrBlank() }
+        ?: candidates.firstOrNull { !it.plainLyrics.isNullOrBlank() || !it.lyricsfile.isNullOrBlank() }
+        ?: candidates.firstOrNull()
 }
