@@ -8,7 +8,6 @@ import com.maxrave.data.mapping.toYouTubeWatchEndpoint
 import com.maxrave.data.parser.parseLibraryPlaylist
 import com.maxrave.data.parser.parseNextLibraryPlaylist
 import com.maxrave.data.parser.parsePlaylistData
-import com.maxrave.data.parser.parseSetVideoId
 import com.maxrave.domain.data.entities.ArtistEntity
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SetVideoIdEntity
@@ -34,7 +33,6 @@ import com.maxrave.kotlinytmusicscraper.pages.NextPage
 import com.maxrave.kotlinytmusicscraper.parser.getPlaylistContinuation
 import com.maxrave.kotlinytmusicscraper.parser.getPlaylistRadioEndpoint
 import com.maxrave.kotlinytmusicscraper.parser.getPlaylistShuffleEndpoint
-import com.maxrave.kotlinytmusicscraper.parser.playlistContinuationContents
 import com.maxrave.logger.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -934,7 +932,7 @@ internal class PlaylistRepositoryImpl(
     ): Flow<Resource<String>> =
         flow {
             val id = playlistId.removePrefix("VL")
-            val entry = setVideoId ?: findSetVideoIdOnline(id, videoId)
+            val entry = setVideoId ?: youTube.findSetVideoIdOnline(id, videoId)
             if (entry == null) {
                 Logger.w(TAG, "removeYouTubePlaylistItem: no entry id for $videoId in $id")
                 emit(Resource.Error<String>("No setVideoId for $videoId"))
@@ -961,33 +959,6 @@ internal class PlaylistRepositoryImpl(
                     emit(Resource.Error<String>(e.message ?: "Unknown error"))
                 }
         }.flowOn(Dispatchers.IO)
-
-    /** Pages through playlist [id] until the row of [videoId] turns up, for its entry id. */
-    private suspend fun findSetVideoIdOnline(
-        id: String,
-        videoId: String,
-    ): String? {
-        val first = youTube.customQuery(browseId = "VL$id", setLogin = true).getOrNull() ?: return null
-        var rows =
-            first.contents
-                ?.twoColumnBrowseResultsRenderer
-                ?.secondaryContents
-                ?.sectionListRenderer
-                ?.contents
-                ?.firstOrNull()
-                ?.musicPlaylistShelfRenderer
-                ?.contents
-                .orEmpty()
-        var continuation = first.getPlaylistContinuation()
-        val seen = mutableSetOf<String>()
-        while (true) {
-            parseSetVideoId(id, rows).firstOrNull { it.videoId == videoId }?.setVideoId?.let { return it }
-            val next = continuation?.takeIf { seen.add(it) } ?: return null
-            val page = youTube.customQuery("", continuation = next, setLogin = true).getOrNull() ?: return null
-            rows = page.playlistContinuationContents().orEmpty()
-            continuation = page.getPlaylistContinuation()
-        }
-    }
 
     override suspend fun insertYourYouTubePlaylist(yourYouTubePlaylist: YourYouTubePlaylistList) =
         withContext(Dispatchers.IO) {

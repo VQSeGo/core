@@ -678,8 +678,11 @@ internal class LocalPlaylistRepositoryImpl(
             val ytPlaylistId = localPlaylist.youtubePlaylistId
             if (ytPlaylistId != null) {
                 val entry = findSetVideoId(song.videoId, ytPlaylistId)
-                val setVideoId = entry?.setVideoId
-                if (entry != null && setVideoId != null) {
+                // Nothing stored (the list can be empty right after "Sync with YouTube", YouTube
+                // serves a new playlist late): ask YouTube for the track's entry before giving up.
+                val setVideoId =
+                    entry?.setVideoId ?: youTube.findSetVideoIdOnline(ytPlaylistId, song.videoId)
+                if (setVideoId != null) {
                     youTube
                         .removeItemYouTubePlaylist(ytPlaylistId, song.videoId, setVideoId)
                         .onSuccess {
@@ -687,7 +690,7 @@ internal class LocalPlaylistRepositoryImpl(
                             // entry YouTube no longer has would be sent again on the next lookup.
                             // A legacy "" row is kept, since it may hold another playlist's entry
                             // that the other playlist still falls back to.
-                            if (entry.youtubePlaylistId.isNotEmpty()) {
+                            if (entry != null && entry.youtubePlaylistId.isNotEmpty()) {
                                 localDataSource.deleteSetVideoId(entry.videoId, entry.youtubePlaylistId)
                             }
                             emit(LocalResource.Success(successMessage))
