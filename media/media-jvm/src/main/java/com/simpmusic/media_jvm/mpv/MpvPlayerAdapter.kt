@@ -668,16 +668,16 @@ class MpvPlayerAdapter(
             // A live broadcast has no start to go back to, so Previous always means the previous track.
             if (cachedPosition > positionThresholdMs && !isCurrentTrackLive()) {
                 Logger.d(TAG, "seekToPrevious: pos=${cachedPosition}ms > ${positionThresholdMs}ms — seeking to start")
-                currentPlayer?.seekTo(0)
-                cachedPosition = 0
+                // Through seekTo(Long), as on Android: it reports onSeeked, without which a paused
+                // player's seek bar and lyrics stayed where they were until Play.
+                seekTo(0L)
             } else if (hasPreviousMediaItem()) {
                 Logger.d(TAG, "seekToPrevious: pos=${cachedPosition}ms <= ${positionThresholdMs}ms — going to previous track")
                 val prevIndex = getPreviousMediaItemIndex()
                 seekTo(prevIndex, 0)
             } else if (!isCurrentTrackLive()) {
                 Logger.d(TAG, "seekToPrevious: No previous item, seeking to start")
-                currentPlayer?.seekTo(0)
-                cachedPosition = 0
+                seekTo(0L)
             }
         }
     }
