@@ -36,35 +36,38 @@ fun BrowseResponse.fromPlaylistToTrack(): List<SongItem> =
         content.toSongItem()
     } ?: emptyList()
 
-fun BrowseResponse.fromPlaylistToTrackWithSetVideoId(): List<Pair<SongItem, String>> =
+/** The rows (and the trailing continuation item, if any) of the first page of a playlist. */
+fun BrowseResponse.playlistShelfContents(): List<MusicShelfRenderer.Content>? =
     (
-        (
-            this.contents
-                ?.singleColumnBrowseResultsRenderer
-                ?.tabs
-                ?: this.contents?.twoColumnBrowseResultsRenderer?.tabs
-        )?.firstOrNull()
-            ?.tabRenderer
-            ?.content
+        this.contents
+            ?.singleColumnBrowseResultsRenderer
+            ?.tabs
+            ?: this.contents?.twoColumnBrowseResultsRenderer?.tabs
+    )?.firstOrNull()
+        ?.tabRenderer
+        ?.content
+        ?.sectionListRenderer
+        ?.contents
+        ?.firstOrNull()
+        ?.musicPlaylistShelfRenderer
+        ?.contents
+        ?: this.contents
+            ?.twoColumnBrowseResultsRenderer
+            ?.secondaryContents
             ?.sectionListRenderer
             ?.contents
             ?.firstOrNull()
             ?.musicPlaylistShelfRenderer
             ?.contents
-            ?: this.contents
-                ?.twoColumnBrowseResultsRenderer
-                ?.secondaryContents
-                ?.sectionListRenderer
-                ?.contents
-                ?.firstOrNull()
-                ?.musicPlaylistShelfRenderer
-                ?.contents
-    )?.mapNotNull { content ->
-        Pair(
-            content.toSongItem() ?: return@mapNotNull null,
-            content.toPlaylistItemData()?.playlistSetVideoId ?: return@mapNotNull null,
-        )
-    } ?: emptyList()
+
+fun MusicShelfRenderer.Content.toSongItemWithSetVideoId(): Pair<SongItem, String>? =
+    Pair(
+        toSongItem() ?: return null,
+        toPlaylistItemData()?.playlistSetVideoId ?: return null,
+    )
+
+fun BrowseResponse.fromPlaylistToTrackWithSetVideoId(): List<Pair<SongItem, String>> =
+    playlistShelfContents()?.mapNotNull { it.toSongItemWithSetVideoId() } ?: emptyList()
 
 fun BrowseResponse.fromPlaylistContinuationToTracks(): List<SongItem> =
     (

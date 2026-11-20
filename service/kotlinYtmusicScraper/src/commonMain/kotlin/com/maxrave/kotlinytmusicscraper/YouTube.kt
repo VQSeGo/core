@@ -85,8 +85,10 @@ import com.maxrave.kotlinytmusicscraper.parser.libraryShelf
 import com.maxrave.kotlinytmusicscraper.parser.nextContinuationPage
 import com.maxrave.kotlinytmusicscraper.parser.nextPage
 import com.maxrave.kotlinytmusicscraper.parser.playlistContinuationContents
+import com.maxrave.kotlinytmusicscraper.parser.playlistShelfContents
 import com.maxrave.kotlinytmusicscraper.parser.subscriptions
 import com.maxrave.kotlinytmusicscraper.parser.toSongItem
+import com.maxrave.kotlinytmusicscraper.parser.toSongItemWithSetVideoId
 import com.maxrave.kotlinytmusicscraper.utils.NetworkGate
 import com.maxrave.kotlinytmusicscraper.utils.NoNetworkException
 import com.maxrave.kotlinytmusicscraper.utils.isNoAnswer
@@ -647,6 +649,58 @@ class YouTube {
             }
 
             return@runCatching listPair
+        }
+
+    /**
+     * A playlist read to its end: its tracks with their setVideoIds, in YouTube's order, and how many
+     * rows of it could not be turned into one (a greyed-out track has no video id to read).
+     */
+    data class PlaylistTracksSnapshot(
+        val tracks: List<Pair<SongItem, String>>,
+        val unreadableRows: Int,
+    )
+
+    /**
+     * Every track of a playlist, for a caller that takes a track missing from it as removed.
+     *
+     * Not [getYouTubePlaylistFullTracksWithSetVideoId], which ends the walk at a page that fails and
+     * returns what it has. Here a page that fails, reads as nothing, or repeats a token fails the
+     * whole result, and so does a first page without rows (an empty answer is not "the playlist is
+     * empty"). Rows that could not be read are counted, so the caller can tell the list may be short.
+     */
+    suspend fun getYouTubePlaylistTracksComplete(playlistId: String): Result<PlaylistTracksSnapshot> =
+        runCatching {
+            val plId = if (playlistId.startsWith("VL")) playlistId else "VL$playlistId"
+            val tracks = mutableListOf<Pair<SongItem, String>>()
+            var unreadable = 0
+            fun read(rows: List<MusicShelfRenderer.Content>) {
+                rows.filter { it.continuationItemRenderer == null }.forEach { row ->
+                    val track = row.toSongItemWithSetVideoId()
+                    if (track != null) tracks.add(track) else unreadable++
+                }
+            }
+            val response = ytMusic.playlist(plId).body<BrowseResponse>()
+            val firstRows = response.playlistShelfContents()
+            check(!firstRows.isNullOrEmpty()) { "Unreadable playlist page" }
+            read(firstRows)
+            var continuation = response.getPlaylistContinuation()
+            val seenContinuations = mutableSetOf<String>()
+            while (continuation != null) {
+                check(seenContinuations.add(continuation)) { "Playlist continuation repeats" }
+                val page =
+                    ytMusic
+                        .browse(
+                            client = WEB_REMIX,
+                            setLogin = true,
+                            params = null,
+                            continuation = continuation,
+                        ).body<BrowseResponse>()
+                val rows = page.playlistContinuationContents()
+                check(!rows.isNullOrEmpty()) { "Unreadable playlist continuation page" }
+                read(rows)
+                continuation = page.getPlaylistContinuation()
+            }
+            PlaylistTracksSnapshot(tracks, unreadable)
         }
 
     /**

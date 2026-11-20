@@ -510,56 +510,94 @@ internal class LocalPlaylistRepositoryImpl(
         localDataSource.updateLocalPlaylistYouTubePlaylistId(id, youtubePlaylistId)
     }
 
+    /**
+     * Makes the local copy of a synced playlist follow YouTube's: new tracks come in, tracks YouTube
+     * no longer has leave the playlist (the song, its download and its file stay), and the order is
+     * YouTube's. See [planSyncedPlaylist] for what is allowed to leave.
+     *
+     * The YouTube list is read strictly ([YouTube.getYouTubePlaylistTracksComplete]): a failed or
+     * unreadable page fails the update and the playlist is left as it was, and a list with rows that
+     * could not be read only adds.
+     */
     override fun updateListTrackSynced(id: Long) =
         flow<Boolean> {
-            val localPlaylist = localDataSource.getLocalPlaylist(id) ?: return@flow
-            val tracks = localPlaylist.tracks ?: emptyList()
-            val currentTracks = tracks.toMutableList()
-            localPlaylist.youtubePlaylistId?.let { ytId ->
-                Logger.d(TAG, "updateListTrackSynced: $ytId")
-                youTube
-                    .getYouTubePlaylistFullTracksWithSetVideoId(ytId)
-                    .onSuccess { list ->
-                        Logger.d(TAG, "updateListTrackSynced: onSuccess ${list.map { it.first.title }}")
-                        val newTrack =
-                            list
-                                .map { it.first }
-                                .toListTrack()
-                                .map { it.videoId }
-                                .toMutableSet()
-                                .subtract(tracks.toMutableSet())
-                        val newTrackList = list.filter { newTrack.contains(it.first.id) }
-                        Logger.w(TAG, "updateListTrackSynced: newTrackList ${newTrackList.map { it.first.title }}")
-                        newTrackList.forEach { new ->
-                            localDataSource.insertSong(new.first.toTrack().toSongEntity())
-                            Logger.i(TAG, "insertSong: ${new.first.toTrack().toSongEntity()}")
+            val localPlaylist = localDataSource.getLocalPlaylist(id)
+            val ytId = localPlaylist?.youtubePlaylistId
+            if (localPlaylist == null || ytId == null) {
+                emit(false)
+                return@flow
+            }
+            Logger.d(TAG, "updateListTrackSynced: $ytId")
+            youTube
+                .getYouTubePlaylistTracksComplete(ytId)
+                .onSuccess { snapshot ->
+                    val remoteRows = snapshot.tracks
+                    val remote = remoteRows.map { it.first.id }
+                    val pairs = localDataSource.getAllPlaylistPairSongByPosition(id)
+                    val local = (pairs.map { it.songId } + (localPlaylist.tracks ?: emptyList())).distinct()
+                    val complete = snapshot.unreadableRows == 0
+                    val remoteSet = remote.toSet()
+                    // Only a track YouTube is known to have held can have been removed there.
+                    val confirmed =
+                        if (complete) {
+                            local
+                                .filter { it !in remoteSet && findSetVideoId(it, ytId) != null }
+                                .toSet()
+                        } else {
+                            emptySet()
+                        }
+                    val plan = planSyncedPlaylist(local, remote, confirmed, complete)
+                    Logger.d(
+                        TAG,
+                        "updateListTrackSynced: ${local.size} local, ${remote.size} on YouTube, " +
+                            "${snapshot.unreadableRows} unreadable, removing ${plan.removed.size}",
+                    )
+                    val localSet = local.toSet()
+                    val newItems = remoteRows.filter { it.first.id !in localSet }.distinctBy { it.first.id }
+                    newItems.forEach { new ->
+                        localDataSource.insertSong(new.first.toTrack().toSongEntity())
+                        Logger.i(TAG, "insertSong: ${new.first.toTrack().toSongEntity()}")
+                    }
+                    // The entries of every track YouTube has, so removing one later can reach YouTube.
+                    remoteRows.forEach { row ->
+                        localDataSource.insertSetVideoId(
+                            SetVideoIdEntity(
+                                videoId = row.first.id,
+                                setVideoId = row.second,
+                                youtubePlaylistId = ytId,
+                            ),
+                        )
+                    }
+                    plan.removed.forEach { videoId ->
+                        localDataSource.deletePairSongLocalPlaylist(id, videoId)
+                        // The entry is YouTube's no more; one left behind would be sent again.
+                        findSetVideoId(videoId, ytId)
+                            ?.takeIf { it.youtubePlaylistId.isNotEmpty() }
+                            ?.let { localDataSource.deleteSetVideoId(it.videoId, it.youtubePlaylistId) }
+                    }
+                    val positionOf = pairs.associate { it.songId to it.position }
+                    val newIds = newItems.mapTo(HashSet()) { it.first.id }
+                    plan.order.forEachIndexed { index, videoId ->
+                        if (videoId in newIds) {
                             localDataSource.insertPairSongLocalPlaylist(
                                 PairSongLocalPlaylist(
                                     playlistId = id,
-                                    songId = new.first.id,
-                                    position = currentTracks.size,
+                                    songId = videoId,
+                                    position = index,
                                     inPlaylist = now(),
                                 ),
                             )
-                            localDataSource.insertSetVideoId(
-                                SetVideoIdEntity(
-                                    videoId = new.first.id,
-                                    setVideoId = new.second,
-                                    youtubePlaylistId = ytId,
-                                ),
-                            )
-                            currentTracks.add(new.first.id)
+                        } else if (positionOf[videoId] != index) {
+                            localDataSource.editPositionOfSongInPlaylist(id, videoId, index)
                         }
-                        localDataSource.updateLocalPlaylistTracks(currentTracks, id).let {
-                            emit(true)
-                        }
-                    }.onFailure { e ->
-                        Logger.e(TAG, "updateListTrackSynced: onFailure ${e.message}")
-                        Logger.e("LocalPlaylistRepositoryImpl", "updateListTrackSynced failed: ${e.message}", e)
-                        emit(false)
                     }
-            }
-            emit(false)
+                    localDataSource.updateLocalPlaylistTracks(plan.order, id)
+                    emit(true)
+                }.onFailure { e ->
+                    Logger.e(TAG, "updateListTrackSynced: onFailure ${e.message}")
+                    Logger.e("LocalPlaylistRepositoryImpl", "updateListTrackSynced failed: ${e.message}", e)
+                    emit(false)
+                }
         }
 
     // Update
