@@ -94,7 +94,7 @@ internal class LyricsCanvasRepositoryImpl(
                             Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                             " ",
                         ).replace(
-                            Regex("( và | & | и | e | und |, |和| dan)"),
+                            Regex("( và | & | и | e | und |, |和| dan )"),
                             " ",
                         ).replace("  ", " ")
                         .replace(Regex("([()])"), "")
@@ -234,7 +234,7 @@ internal class LyricsCanvasRepositoryImpl(
                         Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                         " ",
                     ).replace(
-                        Regex("( và | & | и | e | und |, |和| dan)"),
+                        Regex("( và | & | и | e | und |, |和| dan )"),
                         " ",
                     ).replace("  ", " ")
                     .replace(Regex("([()])"), "")
@@ -245,7 +245,7 @@ internal class LyricsCanvasRepositoryImpl(
                         Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                         " ",
                     ).replace(
-                        Regex("( và | & | и | e | und |, |和| dan)"),
+                        Regex("( và | & | и | e | und |, |和| dan )"),
                         " ",
                     ).replace("  ", " ")
                     .replace(Regex("([()])"), "")
@@ -275,7 +275,7 @@ internal class LyricsCanvasRepositoryImpl(
                         Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                         " ",
                     ).replace(
-                        Regex("( và | & | и | e | und |, |和| dan)"),
+                        Regex("( và | & | и | e | und |, |和| dan )"),
                         " ",
                     ).replace("  ", " ")
                     .replace(Regex("([()])"), "")
@@ -286,7 +286,7 @@ internal class LyricsCanvasRepositoryImpl(
                         Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
                         " ",
                     ).replace(
-                        Regex("( và | & | и | e | und |, |和| dan)"),
+                        Regex("( và | & | и | e | und |, |和| dan )"),
                         " ",
                     ).replace("  ", " ")
                     .replace(Regex("([()])"), "")
