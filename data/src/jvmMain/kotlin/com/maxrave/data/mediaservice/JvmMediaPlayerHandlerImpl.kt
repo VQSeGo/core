@@ -2564,6 +2564,11 @@ class JvmMediaPlayerHandlerImpl(
                             val gain = loudnessGainDb(format.loudnessDb, maxBoostDb = MAX_NORMALIZE_BOOST_DB)
                             Logger.d(TAG, "Loudness: ${format.loudnessDb} dB, gain $gain dB")
                             player.loudnessGainDb = gain
+                        } else {
+                            // No format row (yet): no correction. The adapter keeps the last gain it was
+                            // given and puts it on every new handle, so without this the previous track's
+                            // correction played on this one. Android gets this for free, a fresh enhancer per track.
+                            player.loudnessGainDb = 0f
                         }
                     }
             }
